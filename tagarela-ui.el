@@ -23,7 +23,13 @@
 
 (require 'cl-lib)
 (require 'rx)
+(require 'seq)
 (require 'tagarela-client)
+
+;; `yank-media' (Emacs 29+) is autoloaded; declared so the compiler/loader
+;; knows the symbols used by `tagarela-yank' and the input-mode setup.
+(declare-function yank-media "yank-media" ())
+(declare-function yank-media-handler "yank-media" (types handler))
 
 ;;; Conversation/input buffers
 
@@ -894,6 +900,191 @@ buffer position of the visible title/parameters."
     (setq tagarela--tool-confirm-pos (point-max))
     (1+ pos)))
 
+;;; Images — pasting/attaching images to a prompt (multimodal)
+
+;; An image is attached by inserting it *inline* in the input buffer: the
+;; buffer shows the image itself and, right beneath the text, carries the spec
+;; (a plist) in the `tagarela-image' text property.  At send time
+;; `tagarela--buffer-collect' strips those placeholders out of the text and
+;; hands the specs to `tagarela--prompt-send', so the pasted image is a
+;; WYSIWYG attachment — no separate "pending images" list to manage.
+
+(defcustom tagarela-image-max-width 400
+  "Maximum width, in pixels, an inline image is displayed at.
+Bigger images are scaled down for DISPLAY only; the full-resolution image is
+what gets sent to the model.  nil displays images at their full size."
+  :type '(choice (const :tag "Full size" nil) integer)
+  :group 'tagarela)
+
+(defcustom tagarela-image-mime-priority
+  '("image/png" "image/webp" "image/gif" "image/jpeg"
+    "image/bmp" "image/tiff" "image/svg+xml")
+  "Clipboard image MIME types, most preferred first.
+When the clipboard offers several renderable image types, `tagarela-yank'
+inserts the first one present in this list — no prompt.  Types not listed
+rank after every listed type."
+  :type '(repeat string)
+  :group 'tagarela)
+
+(defun tagarela--image-bytes (data)
+  "Return DATA (a clipboard selection string) as a unibyte string of bytes."
+  (if (multibyte-string-p data)
+      (encode-coding-string data 'binary)
+    data))
+
+(defun tagarela--image-symbol (mime)
+  "Return the `create-image' type symbol for MIME (e.g. `png'), or nil."
+  (when (and (stringp mime) (string-match-p "/" mime))
+    (intern (cadr (split-string mime "/")))))
+
+(defun tagarela--image-create (spec)
+  "Create an Emacs image object for the image SPEC, or nil if not displayable.
+SPEC is a plist (`:data'/`:mime', `:path' or `:url'); a URL has no local bytes
+and is never displayed.  The image is scaled to `tagarela-image-max-width'."
+  (ignore-errors
+    (let ((data (plist-get spec :data))
+          (path (plist-get spec :path))
+          (props (when tagarela-image-max-width
+                   (list :max-width tagarela-image-max-width))))
+      (cond
+       (data
+        (apply #'create-image (base64-decode-string data)
+               (tagarela--image-symbol (plist-get spec :mime)) t props))
+       (path
+        (apply #'create-image (expand-file-name path) nil t props))
+       (t nil)))))
+
+(defun tagarela--image-string (spec)
+  "Return a string carrying the inline image of SPEC.
+The string is a single space holding the image in its `display' property and
+SPEC itself in the `tagarela-image' property (so it can be collected at send
+time).  When the image cannot be displayed (a URL, or a format this Emacs
+cannot render) a textual placeholder — still carrying the `tagarela-image'
+property — is returned instead.  The placeholder is `rear-nonsticky' so text
+typed right after it does not inherit the attachment properties."
+  ;; `rear-nonsticky' matters: text typed right after the placeholder is
+  ;; inserted with `insert-and-inherit', which would otherwise copy the
+  ;; `tagarela-image' (and `display') properties onto it — making typed text
+  ;; look like another image and get dropped from the prompt at send time.
+  (let ((img (tagarela--image-create spec)))
+    (if img
+        (propertize " " 'display img 'tagarela-image spec 'rear-nonsticky t)
+      (propertize (format "[imagem: %s]"
+                          (or (plist-get spec :path)
+                              (plist-get spec :url)
+                              (plist-get spec :mime)
+                              "?"))
+                  'face 'tagarela-separator-face
+                  'tagarela-image spec
+                  'rear-nonsticky t))))
+
+(defun tagarela--insert-image (spec)
+  "Insert SPEC as an inline image at point in the current buffer."
+  (insert (tagarela--image-string spec)))
+
+(defun tagarela--yank-media-image (type data)
+  "`yank-media' handler: insert clipboard image DATA (of MIME TYPE) inline.
+Registered for the input buffer by `tagarela-input-mode'.  Returns non-nil so
+`yank-media' knows it handled the selection."
+  (tagarela--insert-image
+   (list :mime (symbol-name type)
+         :data (base64-encode-string (tagarela--image-bytes data) t)))
+  t)
+
+(defun tagarela--image-mime-rank (mime)
+  "Return the preference rank of the MIME type string MIME (lower is better).
+Unknown types rank after every type in `tagarela-image-mime-priority'."
+  (or (cl-position mime tagarela-image-mime-priority :test #'string=)
+      (length tagarela-image-mime-priority)))
+
+(defun tagarela--clipboard-image ()
+  "Return the best image on the clipboard as (MIME . DATA), or nil.
+Like `yank-media', only considers image types this Emacs can actually render
+\(so the clipboard's `image/x-win-bitmap' and the like are skipped).  Among
+them it picks the highest-priority one per `tagarela-image-mime-priority'
+WITHOUT prompting.  MIME is a string (e.g. \"image/png\"); DATA is the raw
+selection bytes."
+  (when-let* ((targets (gui-get-selection 'CLIPBOARD 'TARGETS))
+              (types (and (vectorp targets) (append targets nil)))
+              (images (seq-filter
+                       (lambda (type)
+                         (let ((parts (split-string (symbol-name type) "/")))
+                           (and (equal (car parts) "image")
+                                (cadr parts)
+                                (image-type-available-p (intern (cadr parts)))
+                                (gui-get-selection 'CLIPBOARD type))))
+                       types))
+              (best (car (sort images
+                               (lambda (a b)
+                                 (< (tagarela--image-mime-rank (symbol-name a))
+                                    (tagarela--image-mime-rank (symbol-name b))))))))
+    (let ((data (gui-get-selection 'CLIPBOARD best)))
+      (when (stringp data)
+        (cons (symbol-name best) (tagarela--image-bytes data))))))
+
+;;;###autoload
+(defun tagarela-yank ()
+  "Yank from the clipboard: an image when there is one, else text.
+When the clipboard holds an image this Emacs can render, the best one (per
+`tagarela-image-mime-priority') is inserted inline without prompting;
+otherwise this falls back to the normal text `yank'."
+  (interactive)
+  (if-let ((image (ignore-errors (tagarela--clipboard-image))))
+      (tagarela--yank-media-image (intern (car image)) (cdr image))
+    (call-interactively #'yank)))
+
+;;;###autoload
+(defun tagarela-attach-image-file (file)
+  "Attach the image FILE to the next prompt (sent to the bridge by path)."
+  (interactive "fImage file: ")
+  (let ((file (expand-file-name file)))
+    (unless (file-readable-p file)
+      (user-error "Cannot read image file: %s" file))
+    (with-current-buffer (tagarela--request-buffer)
+      (tagarela--insert-image (list :path file)))
+    (message "Image attached: %s" file)))
+
+;;;###autoload
+(defun tagarela-attach-image-url (url)
+  "Attach the image at URL to the next prompt (passed through to the provider)."
+  (interactive "sImage URL: ")
+  (with-current-buffer (tagarela--request-buffer)
+    (tagarela--insert-image (list :url url)))
+  (message "Image URL attached: %s" url))
+
+(defun tagarela--buffer-collect-segments ()
+  "Collect the current (input) buffer as an ordered list of segments.
+Each segment is a cons (KIND . VALUE): KIND is either `text' (VALUE the text
+run, with the image placeholders removed) or `image' (VALUE an image spec
+plist).  Segments appear in buffer order, so an image pasted above a caption
+comes before it and one pasted below comes after — this is what the echo in
+`tagarela--prompt-send' uses to reproduce the order the user typed."
+  (let ((pt (point-min))
+        (segments '()))
+    (while (< pt (point-max))
+      (let* ((next (or (next-single-property-change pt 'tagarela-image nil (point-max))
+                       (point-max)))
+             (spec (get-text-property pt 'tagarela-image)))
+        (push (if spec
+                  (cons 'image spec)
+                (cons 'text (buffer-substring-no-properties pt next)))
+              segments)
+        (setq pt next)))
+    (nreverse segments)))
+
+(defun tagarela--buffer-collect ()
+  "Collect the text and the images of the current (input) buffer.
+Returns (TEXT . IMAGES): TEXT is the buffer text with the image placeholders
+removed, IMAGES the list of image specs (plists) in order of appearance."
+  (let ((texts '())
+        (images '()))
+    (dolist (seg (tagarela--buffer-collect-segments))
+      (if (eq (car seg) 'image)
+          (push (cdr seg) images)
+        (push (cdr seg) texts)))
+    (cons (apply #'concat (nreverse texts))
+          (nreverse images))))
+
 ;;; Step 5 — Conversation buffer and input buffer
 
 (defvar tagarela-mode-map
@@ -960,17 +1151,24 @@ Return the buffer position where TEXT was inserted (start of TEXT)."
         (insert (if props (apply #'propertize text props) text))
         target))))
 
-(defun tagarela--prompt-send (text)
+(defun tagarela--prompt-send (text &optional images segments)
   "Core routine: echo TEXT in the conversation and send it as a prompt.
-A message whose trimmed text starts with \"#\" is sent as a local hook via
-`tagarela--hook-send' instead of a normal LLM prompt.  Rejects a new
-prompt while a turn is in progress."
+IMAGES, when non-nil, is a list of image specs collected from the input
+buffer (see `tagarela--buffer-collect'); they are echoed inline and attached
+to the prompt as the `images' array.  SEGMENTS, when non-nil, is the ordered
+list of (KIND . VALUE) segments from `tagarela--buffer-collect-segments' and
+is used to echo the images interleaved with the text the way the user typed
+them (an image above a caption stays above it, and vice versa).  A message
+whose trimmed text starts with \"#\" is sent as a local hook instead (images
+are then ignored, as a hook is not an LLM call).  Rejects a new prompt while
+a turn is in progress."
   (tagarela--ensure-ready)
   (when (or tagarela-in-turn tagarela-pending-tools)
     (error "There is a turn in progress; wait for it to finish"))
   (if (string-prefix-p "#" (string-trim-left text))
       (tagarela--hook-send text)
-    (progn
+    (let ((text (if (and images (string-empty-p (string-trim text)))
+                    "(imagem)" text)))
       (tagarela--render-answer)
       (setq tagarela-in-turn t
             tagarela--thinking-separator-pending nil
@@ -983,9 +1181,35 @@ prompt while a turn is in progress."
        "\n──────────────────────────────\n"
        'face 'tagarela-separator-face)
       (tagarela--insert-propertized
-       (format ">>> %s%s\n\n" text (tagarela--request-annotation))
+       (concat ">>> " (tagarela--prompt-echo-body text images segments) "\n")
        'face 'tagarela-user-face)
-      (tagarela--send "prompt" (tagarela--prompt-params text)))))
+      (tagarela--insert "\n")
+      (tagarela--send "prompt" (tagarela--prompt-params text images)))))
+
+(defun tagarela--prompt-echo-body (text images segments)
+  "Return the echoing body (after the \">>> \") for a prompt.
+TEXT is the raw prompt text and IMAGES its image specs.  SEGMENTS, when
+non-nil, is the ordered list of (KIND . VALUE) segments typed in the input
+buffer; the images are placed where the user put them and each text block is
+trimmed for display.  When SEGMENTS is nil the images are appended after the
+text (used by direct callers such as the slash-command prompt echo).  A
+`[🖼 N]' badge and the per-request annotation trail the first line."
+  (let ((suffix (concat (if images (format "  [🖼 %d]" (length images)) "")
+                        (tagarela--request-annotation)))
+        (chunks
+         (if segments
+             (delq nil
+                   (mapcar (lambda (seg)
+                             (let ((chunk (if (eq (car seg) 'image)
+                                              (tagarela--image-string (cdr seg))
+                                            (string-trim (cdr seg)))))
+                               (unless (string-empty-p chunk) chunk)))
+                           segments))
+           (list (string-trim text)))))
+    (when (null chunks)
+      (setq chunks (list (if images "(imagem)" (string-trim text)))))
+    (concat (car chunks) suffix
+            (mapconcat (lambda (c) (concat "\n" c)) (cdr chunks) ""))))
 
 (defun tagarela--hook-send (text)
   "Echo TEXT (a local hook command) and send it to the bridge as a prompt.
@@ -1078,23 +1302,36 @@ new directory is passed to `tagarela-project-change-hook'."
    (t nil)))
 
 (defun tagarela-send-input ()
-  "Send the current input buffer contents to the bridge and clear it."
+  "Send the current input buffer contents to the bridge and clear it.
+Images pasted/attached in the buffer are collected as attachments (see
+`tagarela--buffer-collect') and sent with the prompt; a slash command never
+carries images."
   (interactive)
-  (let ((text (buffer-substring-no-properties (point-min) (point-max))))
-    (when (string-match-p "[^[:space:]]" text)
-      (unless (tagarela--handle-slash-command text)
-        (tagarela--prompt-send text))
+  (let* ((segments (tagarela--buffer-collect-segments))
+         (collected (tagarela--buffer-collect))
+         (text (car collected))
+         (images (cdr collected))
+         (has-text (string-match-p "[^[:space:]]" text)))
+    (when (or has-text images)
+      (unless (and has-text (tagarela--handle-slash-command text))
+        (tagarela--prompt-send text images segments))
       (erase-buffer))))
 
 (define-minor-mode tagarela-input-mode
   "Minor mode for typing input destined to the llm-bridge.
-C-c C-c sends the whole buffer; RET inserts a newline."
+C-c C-c sends the whole buffer; RET inserts a newline.  C-y yanks an image
+from the clipboard when there is one (see `tagarela-yank')."
   :lighter " LBIn"
   :keymap (let ((map (make-sparse-keymap)))
             (define-key map (kbd "C-c C-c") #'tagarela-send-input)
+            (define-key map (kbd "C-y") #'tagarela-yank)
             (define-key map (kbd "RET") #'newline)
             (define-key map (kbd "C-j") #'newline)
-            map))
+            map)
+  (when tagarela-input-mode
+    ;; Let `yank-media' (and `tagarela-yank', via it) insert clipboard
+    ;; images inline in this buffer.
+    (yank-media-handler "image/.*" #'tagarela--yank-media-image)))
 
 (defun tagarela--mode-line-session ()
   "Return the mode-line fragment with the session token usage and model.
@@ -1720,6 +1957,8 @@ Then reopen the llm-bridge window layout."
     (define-key map (kbd "m") #'tagarela-set-model)
     (define-key map (kbd "t") #'tagarela-set-thinking)
     (define-key map (kbd "e") #'tagarela-set-reasoning-effort)
+    (define-key map (kbd "i") #'tagarela-attach-image-file)
+    (define-key map (kbd "u") #'tagarela-attach-image-url)
     map)
   "Keymap for the `C-c a' prefix of the llm-bridge commands.")
 

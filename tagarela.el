@@ -8,7 +8,7 @@
 ;; the conversation in a dedicated buffer and executes the tools locally.
 ;;
 ;; The bridge protocol is documented in
-;; ~/mysrc/llm-bridge/docs/cliente-impl-guide.md.
+;; ~/mysrc/llm-bridge/docs/source/.
 ;;
 ;; Since the client grew large it was split in two halves, both alongside
 ;; this file in the package root:
@@ -46,6 +46,17 @@
 ;;   C-c a e  tagarela-set-reasoning-effort
 ;;                                     set the thinking depth (low/medium/high,
 ;;                                     empty = provider default) per request
+;;   C-c a i  tagarela-attach-image-file
+;;                                     attach an image (by path) to the next
+;;                                     prompt
+;;   C-c a u  tagarela-attach-image-url
+;;                                     attach an image (by URL) to the next
+;;                                     prompt
+;;
+;; Images are attached inline in the input buffer (the image shows in the
+;; buffer) and sent with the prompt as the bridge's `images' array.  In the
+;; input buffer, C-y (`tagarela-yank') pastes an image from the clipboard when
+;; there is one, otherwise it yanks text as usual.
 ;;
 ;; In the input buffer, C-c C-c sends the prompt (RET inserts a newline). In the
 ;; conversation buffer, C-c a q quits, C-c a k kills and C-c a c cancels.

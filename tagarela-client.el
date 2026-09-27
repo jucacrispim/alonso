@@ -296,10 +296,39 @@ Returns \"\" when no override is set."
           (concat "  [" (mapconcat #'identity (nreverse parts) " ") "]")
         ""))))
 
-(defun tagarela--prompt-params (text)
+(defun tagarela--image-json (spec)
+  "Convert an image SPEC plist into a JSON-ready hash table.
+SPEC is a plist matching one `images' entry the bridge accepts in a `prompt':
+either `:data' (inline base64, with an optional `:mime' media type), `:url'
+(a link passed through to the provider) or `:path' (a local file read by the
+bridge).  An optional `:detail' (DeepSeek) is also honored."
+  (let ((tbl (make-hash-table :test 'equal))
+        (data (plist-get spec :data))
+        (url (plist-get spec :url))
+        (path (plist-get spec :path))
+        (mime (plist-get spec :mime))
+        (detail (plist-get spec :detail)))
+    (cond
+     (data
+      (puthash "data" data tbl)
+      (when mime (puthash "mime_type" mime tbl)))
+     (url
+      (puthash "url" url tbl))
+     (path
+      (puthash "path" path tbl)))
+    (when detail
+      (puthash "detail" detail tbl))
+    tbl))
+
+(defun tagarela--images-json (specs)
+  "Convert a list of image SPECS (plists) into a JSON array (a vector)."
+  (vconcat (mapcar #'tagarela--image-json specs)))
+
+(defun tagarela--prompt-params (text &optional images)
   "Build the `prompt' params plist from TEXT and the per-request overrides.
 Only the fields that were set are included, so the bridge keeps the provider
-defaults for the rest."
+defaults for the rest.  IMAGES, when non-nil, is a list of image spec plists
+(see `tagarela--image-json') attached as the `images' array."
   (let ((params (list "text" text)))
     (let ((buf (get-buffer tagarela-input-buffer-name)))
       (when buf
@@ -314,8 +343,10 @@ defaults for the rest."
                                                    :json-false t)))))
           (unless (string-empty-p tagarela-request-reasoning-effort)
             (setq params (append params (list "reasoning_effort"
-                                               tagarela-request-reasoning-effort))))))
-    params)))
+                                               tagarela-request-reasoning-effort)))))))
+    (when images
+      (setq params (append params (list "images" (tagarela--images-json images)))))
+    params))
 
 (defun tagarela--json-plist-to-hash (plist)
   "Convert PLIST (flat alternating keys/values) into a hash table."
