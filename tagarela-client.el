@@ -176,6 +176,10 @@ or `chunk' that follows, and cleared at the start/end of every turn.")
   "Total input tokens (sent) accumulated across all turns of the session.")
 (defvar tagarela-session-output-tokens 0
   "Total output tokens (received) accumulated across all turns of the session.")
+(defvar tagarela-session-cache-hit-tokens 0
+  "Total prompt-cache hit tokens accumulated across all turns of the session.")
+(defvar tagarela-session-cache-miss-tokens 0
+  "Total prompt-cache miss tokens accumulated across all turns of the session.")
 (defvar tagarela-session-model nil
   "Model used in the current session (nil until the first `turn_end').")
 
@@ -213,6 +217,8 @@ Called when the bridge is restarted or shut down, ending the session."
   (tagarela--stop-spinner)
   (setq tagarela-session-input-tokens 0
         tagarela-session-output-tokens 0
+        tagarela-session-cache-hit-tokens 0
+        tagarela-session-cache-miss-tokens 0
         tagarela-session-model nil
         tagarela--current-turn-input-tokens 0
         tagarela--current-turn-output-tokens 0

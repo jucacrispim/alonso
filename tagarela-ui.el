@@ -661,6 +661,8 @@ usage and show a per-turn summary with the model."
         tagarela--turn-finalized t)
   (let ((input (gethash "input_tokens" ev 0))
         (output (gethash "output_tokens" ev 0))
+        (cache-hit (gethash "cache_hit_tokens" ev 0))
+        (cache-miss (gethash "cache_miss_tokens" ev 0))
         (model (gethash "model" ev)))
     (let ((inc-in (- input tagarela--current-turn-input-tokens))
           (inc-out (- output tagarela--current-turn-output-tokens)))
@@ -668,17 +670,23 @@ usage and show a per-turn summary with the model."
             (+ tagarela-session-input-tokens (max 0 inc-in))
             tagarela-session-output-tokens
             (+ tagarela-session-output-tokens (max 0 inc-out))
+            tagarela-session-cache-hit-tokens
+            (+ tagarela-session-cache-hit-tokens (max 0 cache-hit))
+            tagarela-session-cache-miss-tokens
+            (+ tagarela-session-cache-miss-tokens (max 0 cache-miss))
             tagarela--current-turn-input-tokens 0
             tagarela--current-turn-output-tokens 0))
     (when model
       (setq tagarela-session-model model))
     (tagarela--insert-propertized
-     (format "\n[stop_reason=%s model=%s | turn: sent %d, received %d | session: sent %d, received %d]\n"
+     (format "\n[stop_reason=%s model=%s | turn: sent %d, received %d, cache %d/%d | session: sent %d, received %d, cache %d/%d]\n"
              (gethash "stop_reason" ev)
              (or model "?")
-             input output
+             input output cache-hit cache-miss
              tagarela-session-input-tokens
-             tagarela-session-output-tokens)
+             tagarela-session-output-tokens
+             tagarela-session-cache-hit-tokens
+             tagarela-session-cache-miss-tokens)
      'face 'tagarela-separator-face))
   (force-mode-line-update t))
 
@@ -1090,13 +1098,19 @@ C-c C-c sends the whole buffer; RET inserts a newline."
 
 (defun tagarela--mode-line-session ()
   "Return the mode-line fragment with the session token usage and model.
-Shows tokens sent (↑, input), tokens received (↓, output) and the model of
-the current session, e.g. \" [↑12 ↓8 deepseek-chat]\"."
-  (let ((s (format " [↑%d ↓%d %s]"
-                   tagarela-session-input-tokens
-                   tagarela-session-output-tokens
-                   (or tagarela-session-model "?"))))
-    (propertize s 'help-echo "↑ tokens sent · ↓ tokens received · session model")))
+Shows tokens sent (↑, input), tokens received (↓, output), the prompt-cache
+hit/miss totals (⚡, shown only when the provider reports any) and the model
+of the current session, e.g. \" [↑12 ↓8 ⚡900/124 deepseek-chat]\"."
+  (let* ((hit tagarela-session-cache-hit-tokens)
+         (miss tagarela-session-cache-miss-tokens)
+         (cache (if (> (+ hit miss) 0) (format "⚡%d/%d " hit miss) ""))
+         (s (format " [↑%d ↓%d %s%s]"
+                    tagarela-session-input-tokens
+                    tagarela-session-output-tokens
+                    cache
+                    (or tagarela-session-model "?"))))
+    (propertize s 'help-echo
+                "↑ tokens sent · ↓ tokens received · ⚡ prompt-cache hit/miss · session model")))
 
 (defun tagarela--mode-line-request ()
   "Return the mode-line fragment describing the per-request overrides.

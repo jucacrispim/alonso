@@ -84,6 +84,8 @@
 (defvar tagarela-line-buffer)
 (defvar tagarela-session-input-tokens)
 (defvar tagarela-session-output-tokens)
+(defvar tagarela-session-cache-hit-tokens)
+(defvar tagarela-session-cache-miss-tokens)
 (defvar tagarela-session-model)
 (defvar tagarela--tool-call-pos)
 (defvar tagarela--tool-confirm-pos)
@@ -272,28 +274,34 @@
 
 (let ((ev (make-hash-table :test 'equal)))
   (tagarela--reset-session)
-  (dolist (turn '((12 . 8) (30 . 15)))
+  (dolist (turn '((12 8 100 4) (30 15 900 120)))
     (puthash "event" "turn_end" ev)
     (puthash "stop_reason" "END_TURN" ev)
     (puthash "model" "deepseek-chat" ev)
-    (puthash "input_tokens" (car turn) ev)
-    (puthash "output_tokens" (cdr turn) ev)
-    (puthash "total_tokens" (+ (car turn) (cdr turn)) ev)
+    (puthash "input_tokens" (nth 0 turn) ev)
+    (puthash "output_tokens" (nth 1 turn) ev)
+    (puthash "cache_hit_tokens" (nth 2 turn) ev)
+    (puthash "cache_miss_tokens" (nth 3 turn) ev)
+    (puthash "total_tokens" (+ (nth 0 turn) (nth 1 turn)) ev)
     (tagarela--on-turn-end ev))
   (tagarela-tests--assert
    "session accumulates sent/received tokens"
    (and (= 42 tagarela-session-input-tokens)
         (= 23 tagarela-session-output-tokens)))
   (tagarela-tests--assert
+   "session accumulates prompt-cache hit/miss tokens"
+   (and (= 1000 tagarela-session-cache-hit-tokens)
+        (= 124 tagarela-session-cache-miss-tokens)))
+  (tagarela-tests--assert
    "session model comes from turn_end"
    (equal "deepseek-chat" tagarela-session-model))
   (tagarela-tests--assert
-   "mode-line shows sent/received/model"
-   (string-match-p "↑42 ↓23 deepseek-chat"
+   "mode-line shows sent/received/cache/model"
+   (string-match-p "↑42 ↓23 ⚡1000/124 deepseek-chat"
                    (tagarela--mode-line-session)))
   (tagarela-tests--assert
    "turn inserts a summary into the conversation"
-   (string-match-p "turn: sent 30, received 15"
+   (string-match-p "turn: sent 30, received 15, cache 900/120"
                    (with-current-buffer (get-buffer "*llm-bridge*")
                      (buffer-string))))
   (tagarela--reset-session)
@@ -301,7 +309,27 @@
    "reset clears the session"
    (and (zerop tagarela-session-input-tokens)
         (zerop tagarela-session-output-tokens)
+        (zerop tagarela-session-cache-hit-tokens)
+        (zerop tagarela-session-cache-miss-tokens)
         (null tagarela-session-model))))
+
+;; A provider without prompt cache reports 0 hit / 0 miss: the mode-line must
+;; omit the ⚡ fragment entirely (nothing to show).
+(let ((ev (make-hash-table :test 'equal)))
+  (tagarela--reset-session)
+  (puthash "event" "turn_end" ev)
+  (puthash "stop_reason" "END_TURN" ev)
+  (puthash "model" "gemini" ev)
+  (puthash "input_tokens" 5 ev)
+  (puthash "output_tokens" 3 ev)
+  (puthash "cache_hit_tokens" 0 ev)
+  (puthash "cache_miss_tokens" 0 ev)
+  (tagarela--on-turn-end ev)
+  (tagarela-tests--assert
+   "no cache: mode-line omits the ⚡ fragment"
+   (and (string-match-p "↑5 ↓3 gemini" (tagarela--mode-line-session))
+        (not (string-match-p "⚡" (tagarela--mode-line-session)))))
+  (tagarela--reset-session))
 
 ;;; Usage delta — incremental updates during turn and final turn_end
 
