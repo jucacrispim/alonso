@@ -1,0 +1,23 @@
+# Emacs build/runtime artifacts
+*.elc
+/eln-cache/
+elpa/
+elpa-bkp/
+el-get/
+transient/
+session.*
+*~
+firstrun
+\#*\#
+/.cache/
+/.lsp-session-v1
+.eshell/
+ac-comphist.dat
+
+# Byte-compile / packaging
+/dist/
+/*.tar
+/*.elc
+
+# llm-bridge local context (não versionado)
+.llm-bridge/
