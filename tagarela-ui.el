@@ -147,8 +147,11 @@ finished.  Add functions with `add-hook'."
   :group 'tagarela)
 
 (defface tagarela-md-code-face
-  '((t (:inherit fixed-pitch)))
-  "Face for fenced code blocks in the model's answer."
+  '((t (:inherit default)))
+  "Face for fenced code blocks in the model's answer.
+By default it inherits `default', so the code matches the conversation's
+font (size and family).  See `tagarela-md-code-font' to use a different
+font family for the code (e.g. a monospaced one)."
   :group 'tagarela)
 
 (defface tagarela-md-bullet-face
@@ -213,11 +216,37 @@ Has no effect when `tagarela-render-markdown' is nil."
 When non-nil, a fenced code block whose language maps to an available major
 mode (see `tagarela--md-lang-mode') is fontified with that mode's
 syntax highlighting, composed with the base `tagarela-md-code-face'
-(so the block keeps its monospaced font).  When nil, the block keeps only
+(the block font is controlled by `tagarela-md-code-font').  When nil the
+block keeps only
 the base face (monospaced, no colors).  Has no effect when
 `tagarela-render-markdown' is nil."
   :type 'boolean
   :group 'tagarela)
+
+(defun tagarela--apply-md-code-font ()
+  "Apply `tagarela-md-code-font' to `tagarela-md-code-face'.
+When `tagarela-md-code-font' is nil the code face has no explicit font
+family, so it inherits `default' (the conversation font); otherwise it
+uses the given family."
+  (set-face-attribute 'tagarela-md-code-face nil
+                      :family (or tagarela-md-code-font 'unspecified)))
+
+(defun tagarela--set-md-code-font (_symbol value)
+  "Store VALUE in `tagarela-md-code-font' and apply it to the code face."
+  (set-default 'tagarela-md-code-font value)
+  (tagarela--apply-md-code-font))
+
+(defcustom tagarela-md-code-font nil
+  "Font family used for the code blocks in the model's answer.
+When nil (the default) the code blocks inherit `default', so they use the
+same font (family and size) as the rest of the conversation.  When a
+string, e.g. \"Monospace\" or \"Inconsolata\", the code blocks use that
+font family while keeping the conversation's size.  Affects the fenced
+code blocks and their fence lines (see `tagarela-md-code-face')."
+  :type '(choice (const :tag "Same as the conversation" nil)
+                 (string :tag "Font family"))
+  :group 'tagarela
+  :set #'tagarela--set-md-code-font)
 
 (defcustom tagarela-render-markdown-live t
   "Whether to render the answer as it streams, instead of only at the end.

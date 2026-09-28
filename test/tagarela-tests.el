@@ -1651,6 +1651,23 @@ A single face is wrapped in a one-element list so tests can use `memq'."
    (equal '(tagarela-md-code-face)
           (tagarela-tests--md-faces "setq"))))
 
+;;; Code-block font (tagarela-md-code-font)
+
+(tagarela-tests--assert
+ "markdown: by default the code face follows the conversation font"
+ (progn
+   (tagarela--set-md-code-font 'tagarela-md-code-font nil)
+   (and (eq (face-attribute 'tagarela-md-code-face :family) 'unspecified)
+        (eq (face-attribute 'tagarela-md-code-face :inherit) 'default))))
+
+(tagarela-tests--assert
+ "markdown: tagarela-md-code-font sets the code face font family"
+ (prog1
+     (progn
+       (tagarela--set-md-code-font 'tagarela-md-code-font "Monospace")
+       (equal (face-attribute 'tagarela-md-code-face :family) "Monospace"))
+   (tagarela--set-md-code-font 'tagarela-md-code-font nil)))
+
 (tagarela-tests--with-rendered "```elisp\n(setq x 1)\n```\n"
   (tagarela-tests--assert
    "markdown: fontifying a code block does not change the buffer text"
