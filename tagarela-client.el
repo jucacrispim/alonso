@@ -32,8 +32,8 @@
 (declare-function tagarela--on-hook-action "tagarela-ui")
 (declare-function tagarela--on-error "tagarela-ui")
 (declare-function tagarela--on-cancelled "tagarela-ui")
-(declare-function tagarela--show-tool-call "tagarela-ui")
-(declare-function tagarela--schedule-confirm "tagarela-ui")
+(declare-function tagarela--show-tool-call "tagarela-tools")
+(declare-function tagarela--schedule-confirm "tagarela-tools")
 (declare-function tagarela--stop-spinner "tagarela-ui")
 
 ;;;###autoload
@@ -123,7 +123,7 @@ Mutually exclusive with `tagarela-prune'.  Off by default."
   :type 'boolean
   :group 'tagarela)
 
-;;; Step 1 — State structures and JSON construction
+;;; State structures and JSON construction
 
 (defvar tagarela-process nil
   "The llm-bridge subprocess.")
@@ -375,7 +375,7 @@ PARAMS is a flat plist of alternating keys/values, e.g. (\"text\" \"oi\")."
                                                  (tagarela--json-plist-to-hash params))))
                                "\n")))
 
-;;; Step 2 — Process management (subprocess + handshake)
+;;; Process management (subprocess + handshake)
 
 (defvar tagarela-ready nil
   "Non-nil after the bridge sends the `ready' event (handshake done).")
@@ -402,7 +402,7 @@ PARAMS is a flat plist of alternating keys/values, e.g. (\"text\" \"oi\")."
         (tagarela--handle-line line)))
     (setq tagarela-line-buffer (substring tagarela-line-buffer start))))
 
-;;; Step 3 — Event dispatcher
+;;; Event dispatcher
 
 (defun tagarela--handle-line (line)
   "Parse and dispatch a single JSON event LINE from the bridge."
@@ -423,7 +423,7 @@ PARAMS is a flat plist of alternating keys/values, e.g. (\"text\" \"oi\")."
           (cancelled    (tagarela--on-cancelled))
           (t (message "tagarela: unknown event: %s" event)))))))
 
-;;; Step 7 — Tool-calling loop
+;;; Tool-calling loop
 
 (defun tagarela--on-tool-call (ev)
   "Handle a `tool_call' event EV.
@@ -486,7 +486,7 @@ execute synchronously (they are fast file operations)."
     (t (tagarela--send-tool-result
         id (tagarela--execute-tool name input) "success"))))
 
-;;; Step 8 — Implementation of the 6 tools
+;;; Implementation of the 6 tools
 
 (defun tagarela--hval (input key)
   "Get KEY from INPUT (a hash-table parsed from JSON), or nil."

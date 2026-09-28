@@ -10,8 +10,8 @@
 ;; The bridge protocol is documented in
 ;; ~/mysrc/llm-bridge/docs/source/.
 ;;
-;; Since the client grew large it was split in two halves, both alongside
-;; this file in the package root:
+;; Since the client grew large it was split, all files alongside this one in
+;; the package root:
 ;;
 ;;   tagarela-client.el — the "client": JSON protocol (serializing the
 ;;     commands to the bridge and parsing its events), the subprocess
@@ -19,13 +19,24 @@
 ;;     implementations plus the trust-scope decision logic.  It knows nothing
 ;;     about buffers/windows.
 ;;
-;;   tagarela-ui.el — the "UI": the conversation and input buffers,
-;;     rendering of model output, the braille spinner, the mode-line
-;;     fragments, the window layout (open/restart/kill) and the
-;;     tool-confirmation UX (individual questions, `[allowed]' / `[denied]'
-;;     tags, the transient trust-scope menu).
+;;   tagarela-ui.el — the "UI shell": the conversation and input buffers,
+;;     their minor modes and keymaps, the insertion helpers, the shared
+;;     conversation state, the braille spinner, the mode-line fragments, the
+;;     event render handlers, the `/project' command, the window layout
+;;     (open/restart/kill) and the `C-c a' prefix map.
 ;;
-;; This file is the thin entry point: it requires both halves.  `(require
+;; and the rendering/UX pieces that build on the shell (each requires
+;; tagarela-ui.el):
+;;
+;;   tagarela-markdown.el — Markdown rendering of the model's answer.
+;;   tagarela-image.el    — pasting/attaching images to a prompt.
+;;   tagarela-tools.el    — tool-call display and the confirmation/trust UX.
+;;
+;; The dependency is one-way: the shell talks to tagarela-client.el, and the
+;; three leaf files talk to the shell (which reaches their functions only at
+;; runtime, via `declare-function').
+;;
+;; This file is the thin entry point: it requires all of them.  `(require
 ;; 'tagarela)' gives you everything.
 ;;
 ;;; Usage:
@@ -87,6 +98,9 @@
 
 (require 'tagarela-client)
 (require 'tagarela-ui)
+(require 'tagarela-markdown)
+(require 'tagarela-image)
+(require 'tagarela-tools)
 
 (provide 'tagarela)
 
