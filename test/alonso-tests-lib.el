@@ -77,6 +77,7 @@
 (declare-function alonso--render-answer "alonso")
 (declare-function alonso--answer-begin "alonso")
 (declare-function alonso--show-answer-start "alonso")
+(declare-function alonso--pin-window-to-end "alonso")
 (declare-function alonso--image-json "alonso")
 (declare-function alonso--images-json "alonso")
 (declare-function alonso--image-string "alonso")

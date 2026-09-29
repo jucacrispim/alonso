@@ -223,6 +223,24 @@ when there is no answer segment to scroll to."
             (set-window-start win beg)
             (set-window-point win beg)))))))
 
+(defun alonso--pin-window-to-end ()
+  "Re-anchor the conversation window at the end of the buffer.
+Called when a new prompt is started.  While streaming the window only
+follows the output when it is already showing the end (see
+`alonso--insert-propertized'), but `alonso--show-answer-start' leaves the
+window scrolled back to the start of the previous answer when a turn ends.
+Without re-anchoring, a conversation window that is not selected would stop
+following the model's output.  Always re-anchors to the end (like sending a
+message in a chat scrolls to the bottom); once the turn is streaming, a
+window the user scrolls up keeps its position because
+`alonso--insert-propertized' only follows when the window is at the end.
+No-op when the buffer is not displayed."
+  (let ((buf (alonso--get-buffer)))
+    (with-current-buffer buf
+      (let ((win (get-buffer-window buf t)))
+        (when win
+          (set-window-point win (point-max)))))))
+
 ;;; Braille spinner animation during thinking
 
 (defvar alonso--spinner-frames
@@ -577,6 +595,10 @@ a turn is in progress."
       (setq alonso--turn-answer-start
             (with-current-buffer (alonso--get-buffer)
               (copy-marker (point-max))))
+      ;; Re-anchor the window at the end so the streaming answer is followed
+      ;; even when the conversation window is not selected (a previous turn
+      ;; left it scrolled back by `alonso--show-answer-start').
+      (alonso--pin-window-to-end)
       (alonso--send "prompt" (alonso--prompt-params text images)))))
 
 (defun alonso--prompt-echo-body (text images segments)

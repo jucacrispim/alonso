@@ -659,6 +659,65 @@
           (= (window-start win) final-beg)
           (= (window-point win) final-beg)))))
 
+;;; a new prompt re-anchors the window at the end (follows streaming)
+
+;; After a turn ends, `alonso--show-answer-start' leaves the conversation
+;; window scrolled back to the start of the answer (window-point NOT at the
+;; end of the buffer).  While streaming, `alonso--insert-propertized' only
+;; follows the output when the window is already at the end, so a window that
+;; is not selected would stop following the model.  Sending a new prompt must
+;; re-anchor the window at the end, restoring the follow.
+
+(let ((win (selected-window))
+      (buf (alonso--get-buffer))
+      (sent nil))
+  (set-window-buffer win buf)
+  (with-current-buffer buf
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (insert ">>> pergunta\n\n")))
+  (setq alonso--answer-start nil
+        alonso--thinking-separator-pending nil
+        alonso--after-tool-separator-pending nil
+        alonso-in-turn nil
+        alonso-pending-tools nil
+        alonso-show-thinking nil)
+  (with-current-buffer buf
+    (setq alonso--turn-answer-start (copy-marker (point-max))))
+  ;; a long answer (taller than the window), then the turn ends and the window
+  ;; is scrolled back to the answer start — no longer at the end of the buffer
+  (alonso--on-chunk
+   (concat (mapconcat (lambda (i) (format "linha %d" i))
+                      (number-sequence 1 80) "\n")
+           "\n"))
+  (let ((ev (make-hash-table :test 'equal)))
+    (puthash "event" "turn_end" ev)
+    (puthash "stop_reason" "END_TURN" ev)
+    (puthash "model" "deepseek-chat" ev)
+    (puthash "input_tokens" 1 ev)
+    (puthash "output_tokens" 1 ev)
+    (alonso--on-turn-end ev))
+  (alonso-tests--assert
+   "after turn_end the window is NOT at the end (scrolled to the answer)"
+   (and (/= (window-point win) (with-current-buffer buf (point-max)))
+        (= (window-start win) (marker-position alonso--turn-answer-start))))
+  (cl-letf (((symbol-function 'alonso--ensure-ready) (lambda ()))
+            ((symbol-function 'alonso--start-spinner) (lambda ()))
+            ((symbol-function 'alonso--send)
+             (lambda (method &optional params) (push (cons method params) sent))))
+    (alonso--prompt-send "nova pergunta"))
+  (alonso-tests--assert
+   "a new prompt re-anchors the window at the end"
+   (= (window-point win) (with-current-buffer buf (point-max))))
+  ;; the next streamed output is followed by the window
+  (setq alonso--answer-start nil
+        alonso--thinking-separator-pending nil
+        alonso--after-tool-separator-pending nil)
+  (alonso--on-chunk "resposta que segue\n")
+  (alonso-tests--assert
+   "the following streamed output is followed by the window"
+   (= (window-point win) (with-current-buffer buf (point-max)))))
+
 (provide 'alonso-ui-tests)
 
 ;;; alonso-ui-tests.el ends here
