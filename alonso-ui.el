@@ -1,4 +1,4 @@
-;;; tagarela-ui.el --- llm-bridge UI shell: buffers, modes, windows -*- lexical-binding: t; -*-
+;;; alonso-ui.el --- llm-bridge UI shell: buffers, modes, windows -*- lexical-binding: t; -*-
 
 ;;; Commentary:
 
@@ -13,198 +13,198 @@
 ;; The three rendering/UX pieces live in sibling files that build on top of
 ;; this one:
 ;;
-;;   tagarela-markdown.el — Markdown rendering of the model's answer (faces,
+;;   alonso-markdown.el — Markdown rendering of the model's answer (faces,
 ;;     hidden markers, clickable links, code-block fontification).
-;;   tagarela-image.el    — pasting/attaching images to a prompt (multimodal).
-;;   tagarela-tools.el    — tool-call display, per-call confirmation and the
+;;   alonso-image.el    — pasting/attaching images to a prompt (multimodal).
+;;   alonso-tools.el    — tool-call display, per-call confirmation and the
 ;;     trust-scope menus.
 ;;
 ;; Those files require this one and reach back only through its public
 ;; helpers; this file reaches their functions only at runtime (declared below),
-;; never at load time.  It requires tagarela-client.el and talks to it through
+;; never at load time.  It requires alonso-client.el and talks to it through
 ;; its public API.
 ;;
-;; See tagarela.el (the entry point) and tagarela-client.el.
+;; See alonso.el (the entry point) and alonso-client.el.
 
 ;;; Code:
 
 (require 'cl-lib)
-(require 'tagarela-client)
+(require 'alonso-client)
 
 ;; Rendering/UX helpers defined in the sibling files, called at runtime.
-(declare-function tagarela--render-markdown-region "tagarela-markdown" (start end))
-(declare-function tagarela--buffer-collect "tagarela-image" ())
-(declare-function tagarela--buffer-collect-segments "tagarela-image" ())
-(declare-function tagarela--image-string "tagarela-image" (spec))
-(declare-function tagarela--yank-media-image "tagarela-image" (type data))
-(declare-function tagarela-yank "tagarela-image" ())
-(declare-function tagarela-attach-image-file "tagarela-image" (file))
-(declare-function tagarela-attach-image-url "tagarela-image" (url))
-(declare-function tagarela--cancel-confirm "tagarela-tools" ())
+(declare-function alonso--render-markdown-region "alonso-markdown" (start end))
+(declare-function alonso--buffer-collect "alonso-image" ())
+(declare-function alonso--buffer-collect-segments "alonso-image" ())
+(declare-function alonso--image-string "alonso-image" (spec))
+(declare-function alonso--yank-media-image "alonso-image" (type data))
+(declare-function alonso-yank "alonso-image" ())
+(declare-function alonso-attach-image-file "alonso-image" (file))
+(declare-function alonso-attach-image-url "alonso-image" (url))
+(declare-function alonso--cancel-confirm "alonso-tools" ())
 
 ;; Defcustoms owned by the sibling files but read/written here.
-(defvar tagarela-render-markdown-live)
+(defvar alonso-render-markdown-live)
 
 ;; `yank-media' (Emacs 29+) is autoloaded; declared so the compiler/loader
-;; knows the symbols used by `tagarela-yank' and the input-mode setup.
+;; knows the symbols used by `alonso-yank' and the input-mode setup.
 (declare-function yank-media "yank-media" ())
 (declare-function yank-media-handler "yank-media" (types handler))
 
 ;;; Conversation/input buffers
 
-(defcustom tagarela-buffer-name "*llm-bridge*"
+(defcustom alonso-buffer-name "*llm-bridge*"
   "Name of the conversation buffer."
   :type 'string
-  :group 'tagarela)
+  :group 'alonso)
 
-(defcustom tagarela-input-buffer-name "*llm-bridge-input*"
+(defcustom alonso-input-buffer-name "*llm-bridge-input*"
   "Name of the buffer where the user types prompts."
   :type 'string
-  :group 'tagarela)
+  :group 'alonso)
 
-(defcustom tagarela-files-changed-hook nil
+(defcustom alonso-files-changed-hook nil
   "Hook run when the bridge emits a `files_changed' event.
 The hook is called with a single argument: the list of files (strings,
 relative paths as the model called them, sorted alphabetically and
 deduplicated) that were changed (written) by the model in the turn that just
 finished.  Add functions with `add-hook'."
   :type 'hook
-  :group 'tagarela)
+  :group 'alonso)
 
 ;;; Faces
 
-(defface tagarela-user-face
+(defface alonso-user-face
   '((t (:inherit font-lock-keyword-face :bold t)))
   "Face for the user's prompts in the conversation buffer."
-  :group 'tagarela)
+  :group 'alonso)
 
-(defface tagarela-hook-face
+(defface alonso-hook-face
   '((t (:inherit font-lock-builtin-face :bold t)))
   "Face for local hook commands (a prompt starting with \"#\")."
-  :group 'tagarela)
+  :group 'alonso)
 
-(defface tagarela-tool-face
+(defface alonso-tool-face
   '((t (:inherit font-lock-builtin-face)))
   "Face for tool_call lines."
-  :group 'tagarela)
+  :group 'alonso)
 
-(defface tagarela-search-face
+(defface alonso-search-face
   '((t (:foreground "red")))
   "Face for the `search' part of a `search_replace' tool call (diff `-')."
-  :group 'tagarela)
+  :group 'alonso)
 
-(defface tagarela-replace-face
+(defface alonso-replace-face
   '((t (:foreground "dark green")))
   "Face for the `replace' part of a `search_replace' tool call (diff `+')."
-  :group 'tagarela)
+  :group 'alonso)
 
-(defface tagarela-error-face
+(defface alonso-error-face
   '((t (:inherit error)))
   "Face for error lines."
-  :group 'tagarela)
+  :group 'alonso)
 
-(defface tagarela-command-face
+(defface alonso-command-face
   '((t (:inherit font-lock-string-face :bold t)))
   "Face for the command/pattern/path highlighted in a tool confirmation."
-  :group 'tagarela)
+  :group 'alonso)
 
-(defface tagarela-separator-face
+(defface alonso-separator-face
   '((t (:inherit shadow)))
   "Face for turn separators and metadata lines."
-  :group 'tagarela)
+  :group 'alonso)
 
-(defcustom tagarela-show-thinking t
+(defcustom alonso-show-thinking t
   "Whether to display the model's chain-of-thought (thinking events)."
   :type 'boolean
-  :group 'tagarela)
+  :group 'alonso)
 
-(defface tagarela-thinking-face
+(defface alonso-thinking-face
   '((t (:inherit font-lock-comment-face :italic t)))
   "Face used to display the model's chain-of-thought."
-  :group 'tagarela)
+  :group 'alonso)
 
 ;;; Conversation buffer state used by the render handlers
 
-(defvar tagarela--thinking-separator-pending nil
+(defvar alonso--thinking-separator-pending nil
   "Non-nil when thinking was shown in the current turn and the two blank
 lines separating it from the response have not been inserted yet.
-Set by `tagarela--on-thinking', consumed by the first `chunk'
+Set by `alonso--on-thinking', consumed by the first `chunk'
 and cleared at the start/end of every turn.")
 
-(defvar tagarela--tool-call-pos nil
+(defvar alonso--tool-call-pos nil
   "Buffer position of the start of the visible line (title for read-only
 tools, `Run tool: ...?' question for mutating ones) of the last tool call
 shown.  Used as the scroll anchor while the tool's confirmation question is
-being asked (`tagarela--keep-question-visible'), so the beginning of a
+being asked (`alonso--keep-question-visible'), so the beginning of a
 possibly large diff stays visible, and as the spot where
-`tagarela--record-tool-confirmation' prepends the `[allowed]' /
+`alonso--record-tool-confirmation' prepends the `[allowed]' /
 `[denied]' tag.")
 
-(defvar tagarela--tool-confirm-pos nil
+(defvar alonso--tool-confirm-pos nil
   "Buffer position just after the parameters of the last tool call shown,
 kept as the lower scroll anchor while the confirmation is pending.")
 
 
 ;;; Answer segment (drives the Markdown renderer)
 
-(defvar tagarela--answer-start nil
+(defvar alonso--answer-start nil
   "Marker at the start of the answer segment still to be rendered, or nil.
-Set on the first `chunk' of a segment by `tagarela--answer-begin' and
-cleared by `tagarela--render-answer' once the segment is rendered.")
+Set on the first `chunk' of a segment by `alonso--answer-begin' and
+cleared by `alonso--render-answer' once the segment is rendered.")
 
-(defvar tagarela--turn-answer-start nil
+(defvar alonso--turn-answer-start nil
   "Marker at the start of the current turn's model output, or nil.
-Set by `tagarela--prompt-send' just before the prompt is sent and used by
-`tagarela--show-answer-start' when the turn ends, to scroll the window back
+Set by `alonso--prompt-send' just before the prompt is sent and used by
+`alonso--show-answer-start' when the turn ends, to scroll the window back
 to the beginning of an answer taller than the window.")
 
-(defun tagarela--answer-begin ()
+(defun alonso--answer-begin ()
   "Start a new answer segment if one is not already open."
-  (unless tagarela--answer-start
-    (setq tagarela--answer-start
-          (with-current-buffer (tagarela--get-buffer)
+  (unless alonso--answer-start
+    (setq alonso--answer-start
+          (with-current-buffer (alonso--get-buffer)
             (copy-marker (point-max))))))
 
-(defun tagarela--render-answer ()
+(defun alonso--render-answer ()
   "Render the Markdown of the current answer segment and close it.
 No-op when no segment is open.  Called at every boundary where the model
 stops writing (thinking, tool call, end of turn)."
-  (when tagarela--answer-start
-    (let ((start (marker-position tagarela--answer-start)))
-      (set-marker tagarela--answer-start nil)
-      (setq tagarela--answer-start nil)
+  (when alonso--answer-start
+    (let ((start (marker-position alonso--answer-start)))
+      (set-marker alonso--answer-start nil)
+      (setq alonso--answer-start nil)
       (when start
-        (with-current-buffer (tagarela--get-buffer)
+        (with-current-buffer (alonso--get-buffer)
           (let ((end (point-max)))
             (when (< start end)
-              (tagarela--render-markdown-region start end))))))))
+              (alonso--render-markdown-region start end))))))))
 
-(defun tagarela--render-answer-live ()
+(defun alonso--render-answer-live ()
   "Re-render the pending answer segment without closing it.
-No-op when `tagarela-render-markdown-live' is nil or no segment is
+No-op when `alonso-render-markdown-live' is nil or no segment is
 open.  Called after every `chunk' so the formatting appears while the model
 is still writing.  Only complete constructs are rendered, so the answer is
 never shown with a half-written marker hidden."
-  (when (and tagarela-render-markdown-live
-             tagarela--answer-start)
-    (let ((start (marker-position tagarela--answer-start)))
+  (when (and alonso-render-markdown-live
+             alonso--answer-start)
+    (let ((start (marker-position alonso--answer-start)))
       (when start
-        (with-current-buffer (tagarela--get-buffer)
+        (with-current-buffer (alonso--get-buffer)
           (let ((end (point-max)))
             (when (< start end)
-              (tagarela--render-markdown-region start end))))))))
+              (alonso--render-markdown-region start end))))))))
 
-(defun tagarela--show-answer-start ()
+(defun alonso--show-answer-start ()
   "Leave the conversation window showing the start of the turn's answer.
 Called when the turn ends: while streaming the window stays glued to the
-end (`tagarela--insert-propertized'), so for an answer taller than the
+end (`alonso--insert-propertized'), so for an answer taller than the
 window the beginning ends up scrolled out of view.  Scroll back to the
 beginning of the answer so the user sees where it started and can scroll
 down at will.  No-op when the answer fits in the window (the end is then
 already visible, i.e. the whole answer is on screen) or when the buffer is
 not displayed."
-  (let* ((buf (tagarela--get-buffer))
-         (start tagarela--turn-answer-start)
+  (let* ((buf (alonso--get-buffer))
+         (start alonso--turn-answer-start)
          (win (get-buffer-window buf t)))
     (when (and win (markerp start) (marker-position start))
       (with-current-buffer buf
@@ -217,238 +217,238 @@ not displayed."
 
 ;;; Braille spinner animation during thinking
 
-(defvar tagarela--spinner-frames
+(defvar alonso--spinner-frames
   ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"]
   "Frames for the braille spinner during thinking.")
 
-(defvar tagarela--spinner-index 0
+(defvar alonso--spinner-index 0
   "Current frame index of the braille spinner.")
 
-(defvar tagarela--spinner-timer nil
+(defvar alonso--spinner-timer nil
   "Timer running the braille spinner animation.")
 
-(defvar tagarela--spinner-interval 0.1
+(defvar alonso--spinner-interval 0.1
   "Interval in seconds between spinner frame updates (animation speed).")
 
-(defvar tagarela--spinner-active nil
+(defvar alonso--spinner-active nil
   "Non-nil while the turn spinner is active (from prompt to turn end).")
 
-(defun tagarela--spinner-tick ()
+(defun alonso--spinner-tick ()
   "Advance the spinner frame and update the mode-line."
-  (setq tagarela--spinner-index
-        (mod (1+ tagarela--spinner-index)
-             (length tagarela--spinner-frames)))
+  (setq alonso--spinner-index
+        (mod (1+ alonso--spinner-index)
+             (length alonso--spinner-frames)))
   (force-mode-line-update t))
 
-(defun tagarela--start-spinner ()
+(defun alonso--start-spinner ()
   "Start the braille spinner timer if not already running.
 Keeps the animation frame when the timer is already running, so streaming
 chunks do not restart the spinner from the beginning."
-  (setq tagarela--spinner-active t)
-  (unless (timerp tagarela--spinner-timer)
-    (setq tagarela--spinner-index 0)
-    (setq tagarela--spinner-timer
-          (run-with-timer tagarela--spinner-interval
-                          tagarela--spinner-interval
-                          #'tagarela--spinner-tick))))
+  (setq alonso--spinner-active t)
+  (unless (timerp alonso--spinner-timer)
+    (setq alonso--spinner-index 0)
+    (setq alonso--spinner-timer
+          (run-with-timer alonso--spinner-interval
+                          alonso--spinner-interval
+                          #'alonso--spinner-tick))))
 
-(defun tagarela--stop-spinner ()
+(defun alonso--stop-spinner ()
   "Stop the braille spinner timer and clear the active state."
-  (setq tagarela--spinner-active nil)
-  (when (timerp tagarela--spinner-timer)
-    (cancel-timer tagarela--spinner-timer)
-    (setq tagarela--spinner-timer nil))
+  (setq alonso--spinner-active nil)
+  (when (timerp alonso--spinner-timer)
+    (cancel-timer alonso--spinner-timer)
+    (setq alonso--spinner-timer nil))
   (force-mode-line-update t))
 
-(defun tagarela--mode-line-status ()
+(defun alonso--mode-line-status ()
   "Return the mode-line status fragment for the conversation buffer.
 Shows the braille spinner while a turn is in flight (from prompt to
 turn_end/error/cancelled), or `[llm-bridge…]' during a turn with no spinner."
   (cond
-   (tagarela--spinner-active
-    (format " [%s]" (aref tagarela--spinner-frames
-                          tagarela--spinner-index)))
-   (tagarela-in-turn
+   (alonso--spinner-active
+    (format " [%s]" (aref alonso--spinner-frames
+                          alonso--spinner-index)))
+   (alonso-in-turn
     " [llm-bridge…]")
    (t "")))
 
 ;;; Event render handlers (dispatched by the client's `--handle-line')
 
-(defun tagarela--on-chunk (text)
+(defun alonso--on-chunk (text)
   "Handle a `chunk' event with TEXT (streaming fragment)."
-  (when tagarela--after-tool-separator-pending
+  (when alonso--after-tool-separator-pending
     ;; The tool output finished and the model resumed: separate it with
     ;; two blank lines (three newlines), only on the first transition.
-    (setq tagarela--after-tool-separator-pending nil)
-    (tagarela--insert "\n\n\n"))
-  (when tagarela--thinking-separator-pending
+    (setq alonso--after-tool-separator-pending nil)
+    (alonso--insert "\n\n\n"))
+  (when alonso--thinking-separator-pending
     ;; The thinking finished and the answer started: separate it with two
     ;; blank lines (three newlines), only on the first transition.
-    (setq tagarela--thinking-separator-pending nil)
-    (tagarela--insert "\n\n\n"))
-  (tagarela--answer-begin)
-  (tagarela--insert text)
-  (tagarela--render-answer-live))
+    (setq alonso--thinking-separator-pending nil)
+    (alonso--insert "\n\n\n"))
+  (alonso--answer-begin)
+  (alonso--insert text)
+  (alonso--render-answer-live))
 
-(defun tagarela--on-thinking (text)
+(defun alonso--on-thinking (text)
   "Handle a `thinking' event with TEXT (chain-of-thought fragment)."
-  (tagarela--render-answer)
-  (tagarela--start-spinner)
-  (when tagarela-show-thinking
-    (when tagarela--after-tool-separator-pending
+  (alonso--render-answer)
+  (alonso--start-spinner)
+  (when alonso-show-thinking
+    (when alonso--after-tool-separator-pending
       ;; The tool output finished and the model started thinking: separate
       ;; it with two blank lines, only on the first transition.
-      (setq tagarela--after-tool-separator-pending nil)
-      (tagarela--insert "\n\n\n"))
-    (setq tagarela--thinking-separator-pending t)
-    (tagarela--insert-propertized
-     text 'face 'tagarela-thinking-face)))
+      (setq alonso--after-tool-separator-pending nil)
+      (alonso--insert "\n\n\n"))
+    (setq alonso--thinking-separator-pending t)
+    (alonso--insert-propertized
+     text 'face 'alonso-thinking-face)))
 
-(defun tagarela--on-turn-end (ev)
+(defun alonso--on-turn-end (ev)
   "Handle a `turn_end' event EV: finalize turn tokens, accumulate session
 usage and show a per-turn summary with the model."
-  (tagarela--render-answer)
-  (tagarela--stop-spinner)
-  (setq tagarela-in-turn nil
-        tagarela--thinking-separator-pending nil
-        tagarela--after-tool-separator-pending nil
-        tagarela--turn-finalized t)
+  (alonso--render-answer)
+  (alonso--stop-spinner)
+  (setq alonso-in-turn nil
+        alonso--thinking-separator-pending nil
+        alonso--after-tool-separator-pending nil
+        alonso--turn-finalized t)
   (let ((input (gethash "input_tokens" ev 0))
         (output (gethash "output_tokens" ev 0))
         (cache-hit (gethash "cache_hit_tokens" ev 0))
         (cache-miss (gethash "cache_miss_tokens" ev 0))
         (model (gethash "model" ev)))
-    (let ((inc-in (- input tagarela--current-turn-input-tokens))
-          (inc-out (- output tagarela--current-turn-output-tokens)))
-      (setq tagarela-session-input-tokens
-            (+ tagarela-session-input-tokens (max 0 inc-in))
-            tagarela-session-output-tokens
-            (+ tagarela-session-output-tokens (max 0 inc-out))
-            tagarela-session-cache-hit-tokens
-            (+ tagarela-session-cache-hit-tokens (max 0 cache-hit))
-            tagarela-session-cache-miss-tokens
-            (+ tagarela-session-cache-miss-tokens (max 0 cache-miss))
-            tagarela--current-turn-input-tokens 0
-            tagarela--current-turn-output-tokens 0))
+    (let ((inc-in (- input alonso--current-turn-input-tokens))
+          (inc-out (- output alonso--current-turn-output-tokens)))
+      (setq alonso-session-input-tokens
+            (+ alonso-session-input-tokens (max 0 inc-in))
+            alonso-session-output-tokens
+            (+ alonso-session-output-tokens (max 0 inc-out))
+            alonso-session-cache-hit-tokens
+            (+ alonso-session-cache-hit-tokens (max 0 cache-hit))
+            alonso-session-cache-miss-tokens
+            (+ alonso-session-cache-miss-tokens (max 0 cache-miss))
+            alonso--current-turn-input-tokens 0
+            alonso--current-turn-output-tokens 0))
     (when model
-      (setq tagarela-session-model model))
-    (tagarela--insert-propertized
+      (setq alonso-session-model model))
+    (alonso--insert-propertized
      (format "\n[stop_reason=%s model=%s | turn: sent %d, received %d, cache %d/%d | session: sent %d, received %d, cache %d/%d]\n"
              (gethash "stop_reason" ev)
              (or model "?")
              input output cache-hit cache-miss
-             tagarela-session-input-tokens
-             tagarela-session-output-tokens
-             tagarela-session-cache-hit-tokens
-             tagarela-session-cache-miss-tokens)
-     'face 'tagarela-separator-face))
+             alonso-session-input-tokens
+             alonso-session-output-tokens
+             alonso-session-cache-hit-tokens
+             alonso-session-cache-miss-tokens)
+     'face 'alonso-separator-face))
   (force-mode-line-update t)
-  (tagarela--show-answer-start))
+  (alonso--show-answer-start))
 
-(defun tagarela--on-usage-delta (ev)
+(defun alonso--on-usage-delta (ev)
   "Handle a `usage_delta' event EV: update turn and session token usage."
-  (unless tagarela--turn-finalized
+  (unless alonso--turn-finalized
     (let ((input (gethash "input_tokens" ev 0))
           (output (gethash "output_tokens" ev 0)))
-      (let ((inc-in (- input tagarela--current-turn-input-tokens))
-            (inc-out (- output tagarela--current-turn-output-tokens)))
+      (let ((inc-in (- input alonso--current-turn-input-tokens))
+            (inc-out (- output alonso--current-turn-output-tokens)))
         (when (> inc-in 0)
-          (setq tagarela-session-input-tokens (+ tagarela-session-input-tokens inc-in)
-                tagarela--current-turn-input-tokens input))
+          (setq alonso-session-input-tokens (+ alonso-session-input-tokens inc-in)
+                alonso--current-turn-input-tokens input))
         (when (> inc-out 0)
-          (setq tagarela-session-output-tokens (+ tagarela-session-output-tokens inc-out)
-                tagarela--current-turn-output-tokens output)))
+          (setq alonso-session-output-tokens (+ alonso-session-output-tokens inc-out)
+                alonso--current-turn-output-tokens output)))
       (force-mode-line-update t))))
 
-(defun tagarela--on-error (msg)
+(defun alonso--on-error (msg)
   "Handle an `error' event with MSG."
-  (tagarela--render-answer)
-  (tagarela--stop-spinner)
-  (setq tagarela-in-turn nil
-        tagarela-pending-tools nil
-        tagarela--thinking-separator-pending nil
-        tagarela--after-tool-separator-pending nil)
-  (tagarela--cancel-confirm)
-  (tagarela--insert-propertized
+  (alonso--render-answer)
+  (alonso--stop-spinner)
+  (setq alonso-in-turn nil
+        alonso-pending-tools nil
+        alonso--thinking-separator-pending nil
+        alonso--after-tool-separator-pending nil)
+  (alonso--cancel-confirm)
+  (alonso--insert-propertized
    (format "\n[error] %s\n" msg)
-   'face 'tagarela-error-face))
+   'face 'alonso-error-face))
 
-(defun tagarela--on-files-changed (ev)
+(defun alonso--on-files-changed (ev)
   "Handle a `files_changed' event EV.
-Runs `tagarela-files-changed-hook' with the list of files changed by
+Runs `alonso-files-changed-hook' with the list of files changed by
 the model in the turn that just finished (the `files' field of EV)."
   (let ((changed (gethash "files" ev)))
     (when changed
-      (run-hook-with-args 'tagarela-files-changed-hook changed))))
+      (run-hook-with-args 'alonso-files-changed-hook changed))))
 
-(defun tagarela--on-cancelled ()
+(defun alonso--on-cancelled ()
   "Handle a `cancelled' event."
-  (tagarela--render-answer)
-  (tagarela--stop-spinner)
-  (setq tagarela-in-turn nil
-        tagarela-pending-tools nil
-        tagarela--thinking-separator-pending nil
-        tagarela--after-tool-separator-pending nil)
-  (tagarela--cancel-confirm)
-  (tagarela--insert-propertized
+  (alonso--render-answer)
+  (alonso--stop-spinner)
+  (setq alonso-in-turn nil
+        alonso-pending-tools nil
+        alonso--thinking-separator-pending nil
+        alonso--after-tool-separator-pending nil)
+  (alonso--cancel-confirm)
+  (alonso--insert-propertized
    "\n[cancelled]\n"
-   'face 'tagarela-separator-face))
+   'face 'alonso-separator-face))
 
-(defun tagarela--on-hook-action (ev)
+(defun alonso--on-hook-action (ev)
   "Handle a `hook_action' event EV: show a local hook's result.
 A hook (a prompt starting with \"#\") runs a local script instead of calling
 the LLM; the bridge replies with a single `hook_action' event and NO
 `turn_end', so this handler also finalizes the client-side \"turn\" state
-(stopping the spinner, clearing `tagarela-in-turn' and the separator
+(stopping the spinner, clearing `alonso-in-turn' and the separator
 flags).  There is no token/model accounting here because there is no
 `turn_end'.  When EV carries an `error' field (script missing, invalid name
 or non-zero exit) the message is shown in the error face; otherwise the
 script's combined output is inserted as plain text."
-  (tagarela--render-answer)
-  (tagarela--stop-spinner)
-  (setq tagarela-in-turn nil
-        tagarela-pending-tools nil
-        tagarela--thinking-separator-pending nil
-        tagarela--after-tool-separator-pending nil
-        tagarela--turn-finalized t)
-  (tagarela--cancel-confirm)
+  (alonso--render-answer)
+  (alonso--stop-spinner)
+  (setq alonso-in-turn nil
+        alonso-pending-tools nil
+        alonso--thinking-separator-pending nil
+        alonso--after-tool-separator-pending nil
+        alonso--turn-finalized t)
+  (alonso--cancel-confirm)
   (let ((name (gethash "name" ev))
         (output (gethash "output" ev))
         (err (gethash "error" ev)))
     (if err
-        (tagarela--insert-propertized
+        (alonso--insert-propertized
          (format "\n[hook %s] error: %s\n" name err)
-         'face 'tagarela-error-face)
-      (tagarela--insert-propertized
+         'face 'alonso-error-face)
+      (alonso--insert-propertized
        (concat "\n" (or output "") "\n"))))
   (force-mode-line-update t))
 
 ;;; Step 5 — Conversation buffer and input buffer
 
-(defvar tagarela-mode-map
+(defvar alonso-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-c a q") #'tagarela-quit)
-    (define-key map (kbd "C-c a k") #'tagarela-kill)
+    (define-key map (kbd "C-c a q") #'alonso-quit)
+    (define-key map (kbd "C-c a k") #'alonso-kill)
     map)
-  "Keymap for `tagarela-mode'.")
+  "Keymap for `alonso-mode'.")
 
-(define-minor-mode tagarela-mode
+(define-minor-mode alonso-mode
   "Minor mode for the llm-bridge conversation buffer."
   :lighter " LB")
 
-(defun tagarela--get-buffer ()
+(defun alonso--get-buffer ()
   "Return the conversation buffer, creating it if needed."
-  (let ((buf (get-buffer-create tagarela-buffer-name)))
+  (let ((buf (get-buffer-create alonso-buffer-name)))
     (with-current-buffer buf
       (unless buffer-read-only
         (setq buffer-read-only t))
-      (unless tagarela-mode
-        (tagarela-mode 1))
-      (unless (cl-member '(:eval (tagarela--mode-line-status))
+      (unless alonso-mode
+        (alonso-mode 1))
+      (unless (cl-member '(:eval (alonso--mode-line-status))
                          mode-line-misc-info :test #'equal)
         (setq-local mode-line-misc-info
                     (append mode-line-misc-info
-                            (list '(:eval (tagarela--mode-line-status))))))
+                            (list '(:eval (alonso--mode-line-status))))))
       ;; Hide the position (line/column/%) — the buffer is a chat log whose
       ;; size changes at every chunk, so the position counter would flicker
       ;; frantically during streaming and make the mode-line (and the
@@ -456,11 +456,11 @@ script's combined output is inserted as plain text."
       (setq-local mode-line-position nil))
     buf))
 
-(defun tagarela--insert-propertized (text &rest props)
+(defun alonso--insert-propertized (text &rest props)
   "Insert TEXT at the end of the conversation buffer with PROPS (plist).
 The displayed window follows along when it was already showing the end.
 Return the buffer position where TEXT was inserted (start of TEXT)."
-  (let ((buf (tagarela--get-buffer)))
+  (let ((buf (alonso--get-buffer)))
     (with-current-buffer buf
       (let* ((win (get-buffer-window buf t))
              (at-bottom (or (null win)
@@ -474,14 +474,14 @@ Return the buffer position where TEXT was inserted (start of TEXT)."
           (set-window-point win (point-max)))
         start))))
 
-(defun tagarela--insert (text)
+(defun alonso--insert (text)
   "Insert TEXT at the end of the conversation buffer."
-  (tagarela--insert-propertized text))
+  (alonso--insert-propertized text))
 
-(defun tagarela--insert-propertized-at (pos text &rest props)
+(defun alonso--insert-propertized-at (pos text &rest props)
   "Insert TEXT at buffer position POS (or at the end if POS is nil) with PROPS.
 Return the buffer position where TEXT was inserted (start of TEXT)."
-  (let ((buf (tagarela--get-buffer)))
+  (let ((buf (alonso--get-buffer)))
     (with-current-buffer buf
       (let ((inhibit-read-only t)
             (target (or pos (point-max))))
@@ -489,47 +489,47 @@ Return the buffer position where TEXT was inserted (start of TEXT)."
         (insert (if props (apply #'propertize text props) text))
         target))))
 
-(defun tagarela--prompt-send (text &optional images segments)
+(defun alonso--prompt-send (text &optional images segments)
   "Core routine: echo TEXT in the conversation and send it as a prompt.
 IMAGES, when non-nil, is a list of image specs collected from the input
-buffer (see `tagarela--buffer-collect'); they are echoed inline and attached
+buffer (see `alonso--buffer-collect'); they are echoed inline and attached
 to the prompt as the `images' array.  SEGMENTS, when non-nil, is the ordered
-list of (KIND . VALUE) segments from `tagarela--buffer-collect-segments' and
+list of (KIND . VALUE) segments from `alonso--buffer-collect-segments' and
 is used to echo the images interleaved with the text the way the user typed
 them (an image above a caption stays above it, and vice versa).  A message
 whose trimmed text starts with \"#\" is sent as a local hook instead (images
 are then ignored, as a hook is not an LLM call).  Rejects a new prompt while
 a turn is in progress."
-  (tagarela--ensure-ready)
-  (when (or tagarela-in-turn tagarela-pending-tools)
+  (alonso--ensure-ready)
+  (when (or alonso-in-turn alonso-pending-tools)
     (error "There is a turn in progress; wait for it to finish"))
   (if (string-prefix-p "#" (string-trim-left text))
-      (tagarela--hook-send text)
+      (alonso--hook-send text)
     (let ((text (if (and images (string-empty-p (string-trim text)))
                     "(imagem)" text)))
-      (tagarela--render-answer)
-      (setq tagarela-in-turn t
-            tagarela--thinking-separator-pending nil
-            tagarela--after-tool-separator-pending nil
-            tagarela--current-turn-input-tokens 0
-            tagarela--current-turn-output-tokens 0
-            tagarela--turn-finalized nil)
-      (tagarela--start-spinner)
-      (tagarela--insert-propertized
+      (alonso--render-answer)
+      (setq alonso-in-turn t
+            alonso--thinking-separator-pending nil
+            alonso--after-tool-separator-pending nil
+            alonso--current-turn-input-tokens 0
+            alonso--current-turn-output-tokens 0
+            alonso--turn-finalized nil)
+      (alonso--start-spinner)
+      (alonso--insert-propertized
        "\n──────────────────────────────\n"
-       'face 'tagarela-separator-face)
-      (tagarela--insert-propertized
-       (concat ">>> " (tagarela--prompt-echo-body text images segments) "\n")
-       'face 'tagarela-user-face)
-      (tagarela--insert "\n")
-      (when (markerp tagarela--turn-answer-start)
-        (set-marker tagarela--turn-answer-start nil))
-      (setq tagarela--turn-answer-start
-            (with-current-buffer (tagarela--get-buffer)
+       'face 'alonso-separator-face)
+      (alonso--insert-propertized
+       (concat ">>> " (alonso--prompt-echo-body text images segments) "\n")
+       'face 'alonso-user-face)
+      (alonso--insert "\n")
+      (when (markerp alonso--turn-answer-start)
+        (set-marker alonso--turn-answer-start nil))
+      (setq alonso--turn-answer-start
+            (with-current-buffer (alonso--get-buffer)
               (copy-marker (point-max))))
-      (tagarela--send "prompt" (tagarela--prompt-params text images)))))
+      (alonso--send "prompt" (alonso--prompt-params text images)))))
 
-(defun tagarela--prompt-echo-body (text images segments)
+(defun alonso--prompt-echo-body (text images segments)
   "Return the echoing body (after the \">>> \") for a prompt.
 TEXT is the raw prompt text and IMAGES its image specs.  SEGMENTS, when
 non-nil, is the ordered list of (KIND . VALUE) segments typed in the input
@@ -538,13 +538,13 @@ trimmed for display.  When SEGMENTS is nil the images are appended after the
 text (used by direct callers such as the slash-command prompt echo).  A
 `[🖼 N]' badge and the per-request annotation trail the first line."
   (let ((suffix (concat (if images (format "  [🖼 %d]" (length images)) "")
-                        (tagarela--request-annotation)))
+                        (alonso--request-annotation)))
         (chunks
          (if segments
              (delq nil
                    (mapcar (lambda (seg)
                              (let ((chunk (if (eq (car seg) 'image)
-                                              (tagarela--image-string (cdr seg))
+                                              (alonso--image-string (cdr seg))
                                             (string-trim (cdr seg)))))
                                (unless (string-empty-p chunk) chunk)))
                            segments))
@@ -554,31 +554,31 @@ text (used by direct callers such as the slash-command prompt echo).  A
     (concat (car chunks) suffix
             (mapconcat (lambda (c) (concat "\n" c)) (cdr chunks) ""))))
 
-(defun tagarela--hook-send (text)
+(defun alonso--hook-send (text)
   "Echo TEXT (a local hook command) and send it to the bridge as a prompt.
-TEXT must start with \"#\" (the caller, `tagarela--prompt-send', has
+TEXT must start with \"#\" (the caller, `alonso--prompt-send', has
 already checked it and applied the shared turn-in-progress guard).  The
 bridge runs the local script instead of calling the LLM and replies
 asynchronously with a single `hook_action' event and no `turn_end'; the
 client-side turn state is still marked in progress here and closed by
-`tagarela--on-hook-action'."
-  (tagarela--render-answer)
-  (setq tagarela-in-turn t
-        tagarela--thinking-separator-pending nil
-        tagarela--after-tool-separator-pending nil
-        tagarela--current-turn-input-tokens 0
-        tagarela--current-turn-output-tokens 0
-        tagarela--turn-finalized nil)
-  (tagarela--start-spinner)
-  (tagarela--insert-propertized
+`alonso--on-hook-action'."
+  (alonso--render-answer)
+  (setq alonso-in-turn t
+        alonso--thinking-separator-pending nil
+        alonso--after-tool-separator-pending nil
+        alonso--current-turn-input-tokens 0
+        alonso--current-turn-output-tokens 0
+        alonso--turn-finalized nil)
+  (alonso--start-spinner)
+  (alonso--insert-propertized
    "\n──────────────────────────────\n"
-   'face 'tagarela-separator-face)
-  (tagarela--insert-propertized
+   'face 'alonso-separator-face)
+  (alonso--insert-propertized
    (format ">>> %s\n\n" text)
-   'face 'tagarela-hook-face)
-  (tagarela--send "prompt" (tagarela--prompt-params text)))
+   'face 'alonso-hook-face)
+  (alonso--send "prompt" (alonso--prompt-params text)))
 
-(defcustom tagarela-project-dir nil
+(defcustom alonso-project-dir nil
   "Base directory under which the `/project' command resolves its argument.
 
 When non-nil (e.g. \"~/mysrc/\") the `/project' argument is taken as a
@@ -588,17 +588,17 @@ expanded with `expand-file-name' — an absolute path, a `~' path or a path
 relative to `default-directory' all work."
   :type '(choice (const :tag "Argument is a path" nil)
                  (directory :tag "Base directory for project names"))
-  :group 'tagarela)
+  :group 'alonso)
 
-(defcustom tagarela-project-change-hook nil
+(defcustom alonso-project-change-hook nil
   "Hook run after the `/project' command switches the working directory.
 The hook is called with a single argument: the new project directory.  Use
 it to react to a project change (e.g. reload project-specific commands or
 keybindings); the package itself knows nothing about projects."
   :type 'hook
-  :group 'tagarela)
+  :group 'alonso)
 
-(defun tagarela--apply-project-dir-locals (dir)
+(defun alonso--apply-project-dir-locals (dir)
   "Set `default-directory' of the current buffer to DIR and load its
 .dir-locals.el, respecting `safe-local-variable-values'.
 
@@ -610,136 +610,136 @@ hook it triggers (e.g. project keybindings) fires as usual."
   (when (file-exists-p (expand-file-name ".dir-locals.el" dir))
     (hack-dir-local-variables-non-file-buffer)))
 
-(defun tagarela--handle-slash-command (text)
+(defun alonso--handle-slash-command (text)
   "Check if TEXT is a slash command (e.g. /project <name>), execute it and return non-nil if handled.
 
-The `/project' argument is resolved against `tagarela-project-dir': when that
+The `/project' argument is resolved against `alonso-project-dir': when that
 variable is non-nil the argument is a project NAME (resolved as BASE/NAME),
 otherwise it is a PATH expanded with `expand-file-name'.  After switching the
-new directory is passed to `tagarela-project-change-hook'."
+new directory is passed to `alonso-project-change-hook'."
   (cond
    ((string-match "^/project[[:space:]]+\\(.+\\)$" text)
     (let* ((arg (string-trim (match-string 1 text)))
-           (base (and tagarela-project-dir
+           (base (and alonso-project-dir
                       (file-name-as-directory
-                       (expand-file-name tagarela-project-dir))))
+                       (expand-file-name alonso-project-dir))))
            (dir (expand-file-name arg base)))
       (if (not (file-directory-p dir))
           (error "Project directory does not exist: %s" dir)
-        (tagarela--apply-project-dir-locals dir)
-        (with-current-buffer (tagarela--request-buffer)
-          (tagarela--apply-project-dir-locals dir))
-        (with-current-buffer (tagarela--get-buffer)
-          (tagarela--apply-project-dir-locals dir))
-        (tagarela--send "set_cwd" (list "cwd" dir))
-        (run-hook-with-args 'tagarela-project-change-hook dir)
+        (alonso--apply-project-dir-locals dir)
+        (with-current-buffer (alonso--request-buffer)
+          (alonso--apply-project-dir-locals dir))
+        (with-current-buffer (alonso--get-buffer)
+          (alonso--apply-project-dir-locals dir))
+        (alonso--send "set_cwd" (list "cwd" dir))
+        (run-hook-with-args 'alonso-project-change-hook dir)
         (dolist (buf (list (get-buffer "*GNU Emacs*") (get-buffer "*scratch*")))
           (when buf
             (with-current-buffer buf
-              (tagarela--apply-project-dir-locals dir))))
-        (tagarela--insert-propertized
+              (alonso--apply-project-dir-locals dir))))
+        (alonso--insert-propertized
          (format "\n[project set to %s]\n" dir)
-         'face 'tagarela-separator-face)
+         'face 'alonso-separator-face)
         (message "Project set to %s" dir))
       t))
    (t nil)))
 
-(defun tagarela-send-input ()
+(defun alonso-send-input ()
   "Send the current input buffer contents to the bridge and clear it.
 Images pasted/attached in the buffer are collected as attachments (see
-`tagarela--buffer-collect') and sent with the prompt; a slash command never
+`alonso--buffer-collect') and sent with the prompt; a slash command never
 carries images."
   (interactive)
-  (let* ((segments (tagarela--buffer-collect-segments))
-         (collected (tagarela--buffer-collect))
+  (let* ((segments (alonso--buffer-collect-segments))
+         (collected (alonso--buffer-collect))
          (text (car collected))
          (images (cdr collected))
          (has-text (string-match-p "[^[:space:]]" text)))
     (when (or has-text images)
-      (unless (and has-text (tagarela--handle-slash-command text))
-        (tagarela--prompt-send text images segments))
+      (unless (and has-text (alonso--handle-slash-command text))
+        (alonso--prompt-send text images segments))
       (erase-buffer))))
 
-(define-minor-mode tagarela-input-mode
+(define-minor-mode alonso-input-mode
   "Minor mode for typing input destined to the llm-bridge.
 C-c C-c sends the whole buffer; RET inserts a newline.  C-y yanks an image
-from the clipboard when there is one (see `tagarela-yank')."
+from the clipboard when there is one (see `alonso-yank')."
   :lighter " LBIn"
   :keymap (let ((map (make-sparse-keymap)))
-            (define-key map (kbd "C-c C-c") #'tagarela-send-input)
-            (define-key map (kbd "C-y") #'tagarela-yank)
+            (define-key map (kbd "C-c C-c") #'alonso-send-input)
+            (define-key map (kbd "C-y") #'alonso-yank)
             (define-key map (kbd "RET") #'newline)
             (define-key map (kbd "C-j") #'newline)
             map)
-  (when tagarela-input-mode
-    ;; Let `yank-media' (and `tagarela-yank', via it) insert clipboard
+  (when alonso-input-mode
+    ;; Let `yank-media' (and `alonso-yank', via it) insert clipboard
     ;; images inline in this buffer.
-    (yank-media-handler "image/.*" #'tagarela--yank-media-image)))
+    (yank-media-handler "image/.*" #'alonso--yank-media-image)))
 
-(defun tagarela--mode-line-session ()
+(defun alonso--mode-line-session ()
   "Return the mode-line fragment with the session token usage and model.
 Shows tokens sent (↑, input), tokens received (↓, output), the prompt-cache
 hit/miss totals (⚡, shown only when the provider reports any) and the model
 of the current session, e.g. \" [↑12 ↓8 ⚡900/124 deepseek-chat]\"."
-  (let* ((hit tagarela-session-cache-hit-tokens)
-         (miss tagarela-session-cache-miss-tokens)
+  (let* ((hit alonso-session-cache-hit-tokens)
+         (miss alonso-session-cache-miss-tokens)
          (cache (if (> (+ hit miss) 0) (format "⚡%d/%d " hit miss) ""))
          (s (format " [↑%d ↓%d %s%s]"
-                    tagarela-session-input-tokens
-                    tagarela-session-output-tokens
+                    alonso-session-input-tokens
+                    alonso-session-output-tokens
                     cache
-                    (or tagarela-session-model "?"))))
+                    (or alonso-session-model "?"))))
     (propertize s 'help-echo
                 "↑ tokens sent · ↓ tokens received · ⚡ prompt-cache hit/miss · session model")))
 
-(defun tagarela--mode-line-request ()
+(defun alonso--mode-line-request ()
   "Return the mode-line fragment describing the per-request overrides.
 Shows the model, thinking and effort overrides set for the next prompt,
 e.g. \" [model=deepseek-reasoner thinking=on effort=high]\".  Empty when no
 override is set."
-  (let ((ann (tagarela--request-annotation)))
+  (let ((ann (alonso--request-annotation)))
     (if (string-empty-p ann)
         ""
       (propertize ann 'help-echo "Per-request overrides (C-c a m / t / e)"))))
 
-(defun tagarela--setup-input-mode-line ()
+(defun alonso--setup-input-mode-line ()
   "Install the session and request indicators in the input buffer's
 mode-line (idempotent).  Creates the input buffer if it does not exist yet
 (on a fresh open)."
-  (let ((buf (or (get-buffer tagarela-input-buffer-name)
-                 (get-buffer-create tagarela-input-buffer-name))))
+  (let ((buf (or (get-buffer alonso-input-buffer-name)
+                 (get-buffer-create alonso-input-buffer-name))))
     (with-current-buffer buf
-      (unless (cl-member '(:eval (tagarela--mode-line-session))
+      (unless (cl-member '(:eval (alonso--mode-line-session))
                          mode-line-misc-info :test #'equal)
         (setq-local mode-line-misc-info
                     (append mode-line-misc-info
-                            (list '(:eval (tagarela--mode-line-session))))))
-      (unless (cl-member '(:eval (tagarela--mode-line-request))
+                            (list '(:eval (alonso--mode-line-session))))))
+      (unless (cl-member '(:eval (alonso--mode-line-request))
                          mode-line-misc-info :test #'equal)
         (setq-local mode-line-misc-info
                     (append mode-line-misc-info
-                            (list '(:eval (tagarela--mode-line-request)))))))))
+                            (list '(:eval (alonso--mode-line-request)))))))))
 
 ;;;###autoload
-(defun tagarela-open ()
+(defun alonso-open ()
   "Start the bridge and set up the llm-bridge window layout.
 Divides the selected window in two: the left side keeps the buffer that
 was already open and the right side shows the llm-bridge (conversation
 on top, input buffer below, ~20% of the frame height)."
   (interactive)
-  (tagarela--ensure-ready)
-  (tagarela--setup-input-mode-line)
-  (let ((conv (tagarela--get-buffer))
-        (in (get-buffer-create tagarela-input-buffer-name)))
+  (alonso--ensure-ready)
+  (alonso--setup-input-mode-line)
+  (let ((conv (alonso--get-buffer))
+        (in (get-buffer-create alonso-input-buffer-name)))
     (if (get-buffer-window conv)
         ;; Already open: focus the conversation and ensure the input below it.
         (progn
           (select-window (get-buffer-window conv))
-          (unless (get-buffer-window tagarela-input-buffer-name)
+          (unless (get-buffer-window alonso-input-buffer-name)
             (split-window-below)
             (other-window 1)
             (switch-to-buffer in)
-            (tagarela-input-mode 1)))
+            (alonso-input-mode 1)))
       ;; Split the current window in two: left = already-open buffer,
       ;; right = conversation (top) + input (bottom).
       (split-window-right)
@@ -748,9 +748,9 @@ on top, input buffer below, ~20% of the frame height)."
       (split-window-below)
       (other-window 1)                    ; bottom window of the right side
       (switch-to-buffer in)
-      (tagarela-input-mode 1))
+      (alonso-input-mode 1))
     ;; Adjust the bottom window (input) to ~20% of the total frame height
-    (let* ((input-window (get-buffer-window tagarela-input-buffer-name))
+    (let* ((input-window (get-buffer-window alonso-input-buffer-name))
            (frame-height (window-total-height (frame-root-window)))
            (target-height (max 1 (round (* frame-height 0.2))))
            (delta (- target-height (window-total-height input-window))))
@@ -760,59 +760,59 @@ on top, input buffer below, ~20% of the frame height)."
 ;;; Step 4 — User commands (basic interaction)
 
 ;;;###autoload
-(defun tagarela-prompt (text)
+(defun alonso-prompt (text)
   "Send TEXT as a prompt to the bridge."
   (interactive "sPrompt: ")
-  (tagarela--prompt-send text))
+  (alonso--prompt-send text))
 
 ;;;###autoload
-(defun tagarela-cancel ()
+(defun alonso-cancel ()
   "Cancel the current in-flight turn and stop any running tool command."
   (interactive)
   ;; Stop any asynchronous tool command (shell/grep) still running: otherwise
   ;; it would keep running after the turn is cancelled and send a late
   ;; tool_result the bridge no longer expects.
-  (dolist (p tagarela--tool-procs)
+  (dolist (p alonso--tool-procs)
     (when (process-live-p p)
       (delete-process p)))
-  (setq tagarela--tool-procs nil)
-  (when (and tagarela-process (process-live-p tagarela-process))
-    (tagarela--send "cancel")))
+  (setq alonso--tool-procs nil)
+  (when (and alonso-process (process-live-p alonso-process))
+    (alonso--send "cancel")))
 
 ;;;###autoload
-(defun tagarela-set-cwd (dir)
+(defun alonso-set-cwd (dir)
   "Set the bridge working directory to DIR."
   (interactive "DWorking dir: ")
-  (tagarela--send "set_cwd" (list "cwd" (expand-file-name dir))))
+  (alonso--send "set_cwd" (list "cwd" (expand-file-name dir))))
 
 ;;;###autoload
-(defun tagarela-set-provider (provider)
+(defun alonso-set-provider (provider)
   "Set the provider override for the next prompt (empty = default).
 The override is sent as the `provider' field of the next `prompt'."
   (interactive
    (list (completing-read
           "Provider for the next prompt (empty = default): "
           '("deepseek" "google") nil t)))
-  (with-current-buffer (tagarela--request-buffer)
-    (setq-local tagarela-request-provider provider))
+  (with-current-buffer (alonso--request-buffer)
+    (setq-local alonso-request-provider provider))
   (force-mode-line-update t)
   (message "Provider for the next prompt: %s"
            (if (string-empty-p provider) "(default)" provider)))
 
 ;;;###autoload
-(defun tagarela-set-model (model)
+(defun alonso-set-model (model)
   "Set the model override for the next prompt (empty = provider default).
 The override is sent as the `model' field of the next `prompt' and stays
 active for the following prompts until changed (mirrors the bridge)."
   (interactive "sModel for the next prompt (empty = provider default): ")
-  (with-current-buffer (tagarela--request-buffer)
-    (setq-local tagarela-request-model model))
+  (with-current-buffer (alonso--request-buffer)
+    (setq-local alonso-request-model model))
   (force-mode-line-update t)
   (message "Model for the next prompt: %s"
            (if (string-empty-p model) "(provider default)" model)))
 
 ;;;###autoload
-(defun tagarela-set-thinking (thinking)
+(defun alonso-set-thinking (thinking)
   "Set the thinking override for the next prompt: on, off or unset.
 `on' forces thinking (deepseek-reasoner), `off' forces it off
 (deepseek-chat) and `unset' restores the provider's configured mode."
@@ -820,8 +820,8 @@ active for the following prompts until changed (mirrors the bridge)."
    (list (intern (completing-read
                   "Thinking for the next prompt (unset/on/off): "
                   '("unset" "on" "off") nil t))))
-  (with-current-buffer (tagarela--request-buffer)
-    (setq-local tagarela-request-thinking thinking))
+  (with-current-buffer (alonso--request-buffer)
+    (setq-local alonso-request-thinking thinking))
   (force-mode-line-update t)
   (message "Thinking for the next prompt: %s"
            (pcase thinking
@@ -830,101 +830,101 @@ active for the following prompts until changed (mirrors the bridge)."
              (_ "unset (provider default)"))))
 
 ;;;###autoload
-(defun tagarela-set-reasoning-effort (effort)
+(defun alonso-set-reasoning-effort (effort)
   "Set the thinking depth (reasoning_effort) for the next prompt.
 One of \"low\", \"medium\" or \"high\"; empty = provider default."
   (interactive
    (list (completing-read
           "Reasoning effort for the next prompt (empty = default): "
           '("low" "medium" "high") nil t)))
-  (with-current-buffer (tagarela--request-buffer)
-    (setq-local tagarela-request-reasoning-effort effort))
+  (with-current-buffer (alonso--request-buffer)
+    (setq-local alonso-request-reasoning-effort effort))
   (force-mode-line-update t)
   (message "Reasoning effort for the next prompt: %s"
            (if (string-empty-p effort) "(provider default)" effort)))
 
-(defun tagarela-set-knowledge-bases (bases)
+(defun alonso-set-knowledge-bases (bases)
   "Set the bridge knowledge BASES (list of hash tables)."
-  (tagarela--send "set_knowledge_bases" (list "bases" bases)))
+  (alonso--send "set_knowledge_bases" (list "bases" bases)))
 
 ;;;###autoload
-(defun tagarela-quit ()
+(defun alonso-quit ()
   "Send `quit' to the bridge, ending the process."
   (interactive)
-  (when (and tagarela-process (process-live-p tagarela-process))
-    (tagarela--send "quit")))
+  (when (and alonso-process (process-live-p alonso-process))
+    (alonso--send "quit")))
 
 ;;; Step 10 — Shutdown and robustness
 
 ;;;###autoload
-(defun tagarela-kill ()
+(defun alonso-kill ()
   "Terminate the bridge, kill any running tool processes and clean state."
   (interactive)
-  (tagarela--cancel-confirm)
-  (when (and tagarela-process (process-live-p tagarela-process))
-    (tagarela--send "quit")
+  (alonso--cancel-confirm)
+  (when (and alonso-process (process-live-p alonso-process))
+    (alonso--send "quit")
     (sleep-for 0.1)
     ;; the sentinel may have already cleared the process; only delete if alive
-    (when (and tagarela-process (process-live-p tagarela-process))
-      (delete-process tagarela-process)))
-  (dolist (p tagarela--tool-procs)
+    (when (and alonso-process (process-live-p alonso-process))
+      (delete-process alonso-process)))
+  (dolist (p alonso--tool-procs)
     (when (process-live-p p)
       (delete-process p)))
-  (setq tagarela--tool-procs nil)
-  (setq tagarela-process nil
-        tagarela-ready nil
-        tagarela-in-turn nil
-        tagarela-pending-tools nil
-        tagarela-line-buffer ""
-        tagarela--after-tool-separator-pending nil)
+  (setq alonso--tool-procs nil)
+  (setq alonso-process nil
+        alonso-ready nil
+        alonso-in-turn nil
+        alonso-pending-tools nil
+        alonso-line-buffer ""
+        alonso--after-tool-separator-pending nil)
   ;; Detach the pending-answer marker: the buffers may be erased next
   ;; (`--restart'), and a stale marker would then re-render from position 1.
-  (when (markerp tagarela--answer-start)
-    (set-marker tagarela--answer-start nil))
-  (setq tagarela--answer-start nil)
-  (when (markerp tagarela--turn-answer-start)
-    (set-marker tagarela--turn-answer-start nil))
-  (setq tagarela--turn-answer-start nil)
-  (tagarela--reset-session))
+  (when (markerp alonso--answer-start)
+    (set-marker alonso--answer-start nil))
+  (setq alonso--answer-start nil)
+  (when (markerp alonso--turn-answer-start)
+    (set-marker alonso--turn-answer-start nil))
+  (setq alonso--turn-answer-start nil)
+  (alonso--reset-session))
 
-(add-hook 'kill-emacs-hook #'tagarela-kill)
+(add-hook 'kill-emacs-hook #'alonso-kill)
 
 ;;; Step 11 — Prefix keymap and interactive commands
 
 ;;;###autoload
-(defun tagarela-restart ()
+(defun alonso-restart ()
   "Restart the bridge: kill it, clear the buffers and reset the state.
 Then reopen the llm-bridge window layout."
   (interactive)
-  (tagarela-kill)
-  (dolist (b (list (get-buffer tagarela-buffer-name)
-                   (get-buffer tagarela-input-buffer-name)))
+  (alonso-kill)
+  (dolist (b (list (get-buffer alonso-buffer-name)
+                   (get-buffer alonso-input-buffer-name)))
     (when b
       (with-current-buffer b
         (let ((inhibit-read-only t))
           (erase-buffer)))))
-  (tagarela-open))
+  (alonso-open))
 
-(defvar tagarela-prefix-map
+(defvar alonso-prefix-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "l") #'tagarela-open)
-    (define-key map (kbd "o") #'tagarela-open)
-    (define-key map (kbd "r") #'tagarela-restart)
-    (define-key map (kbd "k") #'tagarela-kill)
-    (define-key map (kbd "c") #'tagarela-cancel)
-    (define-key map (kbd "q") #'tagarela-quit)
-    (define-key map (kbd "p") #'tagarela-set-provider)
-    (define-key map (kbd "m") #'tagarela-set-model)
-    (define-key map (kbd "t") #'tagarela-set-thinking)
-    (define-key map (kbd "e") #'tagarela-set-reasoning-effort)
-    (define-key map (kbd "i") #'tagarela-attach-image-file)
-    (define-key map (kbd "u") #'tagarela-attach-image-url)
+    (define-key map (kbd "l") #'alonso-open)
+    (define-key map (kbd "o") #'alonso-open)
+    (define-key map (kbd "r") #'alonso-restart)
+    (define-key map (kbd "k") #'alonso-kill)
+    (define-key map (kbd "c") #'alonso-cancel)
+    (define-key map (kbd "q") #'alonso-quit)
+    (define-key map (kbd "p") #'alonso-set-provider)
+    (define-key map (kbd "m") #'alonso-set-model)
+    (define-key map (kbd "t") #'alonso-set-thinking)
+    (define-key map (kbd "e") #'alonso-set-reasoning-effort)
+    (define-key map (kbd "i") #'alonso-attach-image-file)
+    (define-key map (kbd "u") #'alonso-attach-image-url)
     map)
   "Keymap for the `C-c a' prefix of the llm-bridge commands.")
 
 ;;;###autoload
-(global-set-key (kbd "C-c a") tagarela-prefix-map)
+(global-set-key (kbd "C-c a") alonso-prefix-map)
 
-(provide 'tagarela-ui)
+(provide 'alonso-ui)
 
-;;; tagarela-ui.el ends here
+;;; alonso-ui.el ends here
