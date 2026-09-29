@@ -392,12 +392,14 @@
   (lambda () (equal "" (alonso--mode-line-request)))))
 
 (alonso-tests--assert
- "mode-line-request shows the overrides"
+ "mode-line-request shows only thinking/effort (no model/provider)"
  (alonso-tests--with-req
   "deepseek-reasoner" 't "high"
   (lambda ()
-    (string-match-p "model=deepseek-reasoner thinking=on effort=high"
-                    (alonso--mode-line-request)))))
+    (let ((s (alonso--mode-line-request)))
+      (and (string-match-p "thinking=on effort=high" s)
+           (not (string-match-p "model=" s))
+           (not (string-match-p "provider=" s)))))))
 
 (provide 'alonso-client-tests)
 

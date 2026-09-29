@@ -120,7 +120,8 @@
         (= 12 alonso-session-output-tokens))))
 
 ;;; Regression: first open — the input buffer does not exist yet when the
-;;; mode-line setup runs; even so, the request indicator must be installed.
+;;; mode-line setup runs; even so, the request indicator must be installed
+;;; and the default constructs (modes + position) stripped.
 ;;; The session token usage is installed on the conversation buffer instead.
 
 (let ((input (get-buffer "alonso-chat")))
@@ -134,6 +135,12 @@
      (with-current-buffer buf
        (cl-member '(:eval (alonso--mode-line-request))
                   mode-line-misc-info :test #'equal)))
+    (alonso-tests--assert
+     "setup strips the modes construct from the input bar"
+     (with-current-buffer buf (equal mode-line-modes "")))
+    (alonso-tests--assert
+     "setup strips the position (line/column/All) from the input bar"
+     (with-current-buffer buf (null mode-line-position)))
     ;; idempotency: repeating does not duplicate
     (alonso--setup-input-mode-line)
     (alonso-tests--assert

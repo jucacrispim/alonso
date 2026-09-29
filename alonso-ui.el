@@ -751,23 +751,38 @@ hit/miss totals (⚡, shown only when the provider reports any), e.g.
                 "↑ tokens sent · ↓ tokens received · ⚡ prompt-cache hit/miss")))
 
 (defun alonso--mode-line-request ()
-  "Return the mode-line fragment describing the per-request overrides.
-Shows the model, thinking and effort overrides set for the next prompt,
-e.g. \" [model=deepseek-reasoner thinking=on effort=high]\".  Empty when no
-override is set."
-  (let ((ann (alonso--request-annotation)))
-    (if (string-empty-p ann)
-        ""
-      (propertize ann 'help-echo "Per-request overrides (C-c a m / t / e)"))))
+  "Return the mode-line fragment with the thinking/effort overrides.
+Shows only the thinking and effort overrides set for the next prompt, e.g.
+\" [thinking=on effort=high]\".  The model lives in the conversation bar
+\(see `alonso--mode-line-model') and the provider is not shown anywhere in
+the mode-line, so neither is repeated here.  Empty when none is set."
+  (with-current-buffer (alonso--request-buffer)
+    (let (parts)
+      (pcase alonso-request-thinking
+        ('t    (push "thinking=on" parts))
+        ('off  (push "thinking=off" parts)))
+      (unless (string-empty-p alonso-request-reasoning-effort)
+        (push (format "effort=%s" alonso-request-reasoning-effort) parts))
+      (if parts
+          (propertize (concat " [" (mapconcat #'identity (nreverse parts) " ") "]")
+                      'help-echo "Thinking / reasoning-effort overrides (C-c a t / e)")
+        ""))))
 
 (defun alonso--setup-input-mode-line ()
-  "Install the request-override indicator in the input buffer's mode-line
-\(idempotent).  Creates the input buffer if it does not exist yet (on a
-fresh open).  The session token usage lives in the conversation buffer's
-mode-line instead (see `alonso--get-buffer')."
+  "Set up the input buffer's mode-line (idempotent).
+Installs the thinking/effort override indicator and strips the default
+constructs so the bar shows just the buffer name plus that indicator:
+`mode-line-modes' (which would render \"(Fundamental LBIn)\") and
+`mode-line-position' (line/column/%/\"All\").  Creates the input buffer if
+it does not exist yet (on a fresh open).  The session token usage lives in
+the conversation buffer's mode-line instead (see `alonso--get-buffer')."
   (let ((buf (or (get-buffer alonso-input-buffer-name)
                  (get-buffer-create alonso-input-buffer-name))))
     (with-current-buffer buf
+      ;; Drop the modes construct (\"(Fundamental LBIn)\") and the position
+      ;; (line/column/%/\"All\") — the input bar should show only its name.
+      (setq-local mode-line-modes "")
+      (setq-local mode-line-position nil)
       (unless (cl-member '(:eval (alonso--mode-line-request))
                          mode-line-misc-info :test #'equal)
         (setq-local mode-line-misc-info
