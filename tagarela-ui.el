@@ -152,6 +152,12 @@ kept as the lower scroll anchor while the confirmation is pending.")
 Set on the first `chunk' of a segment by `tagarela--answer-begin' and
 cleared by `tagarela--render-answer' once the segment is rendered.")
 
+(defvar tagarela--turn-answer-start nil
+  "Marker at the start of the current turn's model output, or nil.
+Set by `tagarela--prompt-send' just before the prompt is sent and used by
+`tagarela--show-answer-start' when the turn ends, to scroll the window back
+to the beginning of an answer taller than the window.")
+
 (defun tagarela--answer-begin ()
   "Start a new answer segment if one is not already open."
   (unless tagarela--answer-start
@@ -187,6 +193,27 @@ never shown with a half-written marker hidden."
           (let ((end (point-max)))
             (when (< start end)
               (tagarela--render-markdown-region start end))))))))
+
+(defun tagarela--show-answer-start ()
+  "Leave the conversation window showing the start of the turn's answer.
+Called when the turn ends: while streaming the window stays glued to the
+end (`tagarela--insert-propertized'), so for an answer taller than the
+window the beginning ends up scrolled out of view.  Scroll back to the
+beginning of the answer so the user sees where it started and can scroll
+down at will.  No-op when the answer fits in the window (the end is then
+already visible, i.e. the whole answer is on screen) or when the buffer is
+not displayed."
+  (let* ((buf (tagarela--get-buffer))
+         (start tagarela--turn-answer-start)
+         (win (get-buffer-window buf t)))
+    (when (and win (markerp start) (marker-position start))
+      (with-current-buffer buf
+        (let ((beg (marker-position start))
+              (end (point-max)))
+          (when (> (count-screen-lines beg end nil win)
+                   (window-body-height win))
+            (set-window-start win beg)
+            (set-window-point win beg)))))))
 
 ;;; Braille spinner animation during thinking
 
@@ -315,7 +342,8 @@ usage and show a per-turn summary with the model."
              tagarela-session-cache-hit-tokens
              tagarela-session-cache-miss-tokens)
      'face 'tagarela-separator-face))
-  (force-mode-line-update t))
+  (force-mode-line-update t)
+  (tagarela--show-answer-start))
 
 (defun tagarela--on-usage-delta (ev)
   "Handle a `usage_delta' event EV: update turn and session token usage."
@@ -494,6 +522,11 @@ a turn is in progress."
        (concat ">>> " (tagarela--prompt-echo-body text images segments) "\n")
        'face 'tagarela-user-face)
       (tagarela--insert "\n")
+      (when (markerp tagarela--turn-answer-start)
+        (set-marker tagarela--turn-answer-start nil))
+      (setq tagarela--turn-answer-start
+            (with-current-buffer (tagarela--get-buffer)
+              (copy-marker (point-max))))
       (tagarela--send "prompt" (tagarela--prompt-params text images)))))
 
 (defun tagarela--prompt-echo-body (text images segments)
@@ -849,6 +882,9 @@ One of \"low\", \"medium\" or \"high\"; empty = provider default."
   (when (markerp tagarela--answer-start)
     (set-marker tagarela--answer-start nil))
   (setq tagarela--answer-start nil)
+  (when (markerp tagarela--turn-answer-start)
+    (set-marker tagarela--turn-answer-start nil))
+  (setq tagarela--turn-answer-start nil)
   (tagarela--reset-session))
 
 (add-hook 'kill-emacs-hook #'tagarela-kill)

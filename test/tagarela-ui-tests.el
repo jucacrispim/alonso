@@ -518,6 +518,67 @@
                 'tagarela-thinking-face)))))
   (tagarela--stop-spinner))
 
+;;; turn_end scrolls a long answer back to its beginning
+
+;; While streaming the window is glued to the end of the buffer; when the
+;; turn ends and the answer is taller than the window, the window is scrolled
+;; back so the beginning of the answer is on screen.
+
+(let ((win (selected-window))
+      (buf (tagarela--get-buffer)))
+  (set-window-buffer win buf)
+  (with-current-buffer buf
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (insert ">>> pergunta\n\n")))
+  (setq tagarela--answer-start nil
+        tagarela--thinking-separator-pending nil
+        tagarela--after-tool-separator-pending nil
+        tagarela-show-thinking nil)
+  (with-current-buffer buf
+    (setq tagarela--turn-answer-start (copy-marker (point-max))))
+  (let ((answer-beg (marker-position tagarela--turn-answer-start)))
+    (tagarela--on-chunk
+     (concat (mapconcat (lambda (i) (format "linha %d" i))
+                        (number-sequence 1 80) "\n")
+             "\n"))
+    (let ((ev (make-hash-table :test 'equal)))
+      (puthash "event" "turn_end" ev)
+      (puthash "stop_reason" "END_TURN" ev)
+      (puthash "model" "deepseek-chat" ev)
+      (puthash "input_tokens" 1 ev)
+      (puthash "output_tokens" 1 ev)
+      (tagarela--on-turn-end ev))
+    (tagarela-tests--assert
+     "turn_end scrolls a long answer back to its beginning"
+     (and (> answer-beg (point-min))
+          (= (window-start win) answer-beg)
+          (= (window-point win) answer-beg))))
+
+  ;; A short answer (fits in the window) leaves the scroll untouched.
+  (with-current-buffer buf
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (insert ">>> pergunta\n\n")
+      (goto-char (point-max))))
+  (setq tagarela--answer-start nil
+        tagarela--thinking-separator-pending nil
+        tagarela--after-tool-separator-pending nil)
+  (with-current-buffer buf
+    (setq tagarela--turn-answer-start (copy-marker (point-max))))
+  (tagarela--on-chunk "resposta curta\n")
+  (let ((before (window-start win))
+        (ev (make-hash-table :test 'equal)))
+    (puthash "event" "turn_end" ev)
+    (puthash "stop_reason" "END_TURN" ev)
+    (puthash "model" "deepseek-chat" ev)
+    (puthash "input_tokens" 1 ev)
+    (puthash "output_tokens" 1 ev)
+    (tagarela--on-turn-end ev)
+    (tagarela-tests--assert
+     "turn_end leaves a short answer's scroll untouched"
+     (= (window-start win) before))))
+
 (provide 'tagarela-ui-tests)
 
 ;;; tagarela-ui-tests.el ends here
