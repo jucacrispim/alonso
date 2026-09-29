@@ -18,6 +18,15 @@
 (alonso-tests--assert
  "kill-emacs-hook registered" (memq 'alonso-kill kill-emacs-hook))
 
+;;; Token formatting — compact counts
+
+(dolist (case '((0 . "0") (999 . "999") (1000 . "1k") (1500 . "1.5k")
+                (2439 . "2.44k") (999999 . "1M") (1000000 . "1M")
+                (1232432 . "1.23M")))
+  (alonso-tests--assert
+   (format "format-tokens %d -> %s" (car case) (cdr case))
+   (equal (cdr case) (alonso--format-tokens (car case)))))
+
 ;;; Session — token accumulation, per-turn summary and input mode-line
 
 (let ((ev (make-hash-table :test 'equal)))
@@ -45,7 +54,7 @@
    (equal "deepseek-chat" alonso-session-model))
   (alonso-tests--assert
    "input mode-line shows sent/received/cache (no model)"
-   (and (string-match-p "↑42 ↓23 ⚡1000/124" (alonso--mode-line-session))
+   (and (string-match-p "↑42 ↓23 ⚡1k/124" (alonso--mode-line-session))
         (not (string-match-p "deepseek" (alonso--mode-line-session)))))
   (alonso-tests--assert
    "conversation mode-line shows the session model"

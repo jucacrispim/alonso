@@ -320,6 +320,24 @@ Empty until the first `turn_end' reports a model."
     (alonso--insert-propertized
      text 'face 'alonso-thinking-face)))
 
+(defun alonso--format-tokens--scaled (n div)
+  "Return N divided by DIV, rounded to 2 decimals, without trailing zeros.
+E.g. (2439 1000.0) -> \"2.44\", (1500 1000.0) -> \"1.5\", (1000 1000.0) -> \"1\"."
+  (replace-regexp-in-string
+   "\\.?0+$" ""
+   (format "%.2f" (/ (float n) div))))
+
+(defun alonso--format-tokens (n)
+  "Format the token count N compactly.
+Below 1000, the plain number; otherwise a rounded K/M suffix with at most
+two decimals and no trailing zeros, e.g. 999, 1000 -> \"1k\", 1500 ->
+\"1.5k\", 2439 -> \"2.44k\", 1232432 -> \"1.23M\"."
+  (cond
+   ((< n 1000) (number-to-string n))
+   ;; 999995 avoids the ugly \"1000k\": from there up we round into \"1M\".
+   ((< n 999995) (concat (alonso--format-tokens--scaled n 1000.0) "k"))
+   (t (concat (alonso--format-tokens--scaled n 1000000.0) "M"))))
+
 (defun alonso--on-turn-end (ev)
   "Handle a `turn_end' event EV: finalize turn tokens, accumulate session
 usage and show a per-turn summary with the model."
@@ -349,14 +367,15 @@ usage and show a per-turn summary with the model."
     (when model
       (setq alonso-session-model model))
     (alonso--insert-propertized
-     (format "\n[stop_reason=%s model=%s | turn: sent %d, received %d, cache %d/%d | session: sent %d, received %d, cache %d/%d]\n"
+     (format "\n[stop_reason=%s model=%s | turn: sent %s, received %s, cache %s/%s | session: sent %s, received %s, cache %s/%s]\n"
              (gethash "stop_reason" ev)
              (or model "?")
-             input output cache-hit cache-miss
-             alonso-session-input-tokens
-             alonso-session-output-tokens
-             alonso-session-cache-hit-tokens
-             alonso-session-cache-miss-tokens)
+             (alonso--format-tokens input) (alonso--format-tokens output)
+             (alonso--format-tokens cache-hit) (alonso--format-tokens cache-miss)
+             (alonso--format-tokens alonso-session-input-tokens)
+             (alonso--format-tokens alonso-session-output-tokens)
+             (alonso--format-tokens alonso-session-cache-hit-tokens)
+             (alonso--format-tokens alonso-session-cache-miss-tokens))
      'face 'alonso-separator-face))
   (force-mode-line-update t)
   (alonso--show-answer-start))
@@ -714,10 +733,13 @@ hit/miss totals (⚡, shown only when the provider reports any), e.g.
 \" [↑12 ↓8 ⚡900/124]\"."
   (let* ((hit alonso-session-cache-hit-tokens)
          (miss alonso-session-cache-miss-tokens)
-         (cache (if (> (+ hit miss) 0) (format "⚡%d/%d " hit miss) ""))
-         (s (format " [↑%d ↓%d %s]"
-                    alonso-session-input-tokens
-                    alonso-session-output-tokens
+         (cache (if (> (+ hit miss) 0)
+                    (format "⚡%s/%s " (alonso--format-tokens hit)
+                            (alonso--format-tokens miss))
+                  ""))
+         (s (format " [↑%s ↓%s %s]"
+                    (alonso--format-tokens alonso-session-input-tokens)
+                    (alonso--format-tokens alonso-session-output-tokens)
                     cache)))
     (propertize s 'help-echo
                 "↑ tokens sent · ↓ tokens received · ⚡ prompt-cache hit/miss")))
