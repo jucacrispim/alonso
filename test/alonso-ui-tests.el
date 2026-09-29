@@ -216,7 +216,7 @@
   (alonso--on-chunk "post-tool response")
   (alonso-tests--assert
    "two blank lines between the tool output and the model thinking"
-   (equal "\n📄 read\n  path: /tmp/x.txt\n\n\npost-tool reasoning\n\n\npost-tool response"
+   (equal "\n📄 read\n  path:\n    /tmp/x.txt\n\n\npost-tool reasoning\n\n\npost-tool response"
           (with-current-buffer buf
             (buffer-substring-no-properties start (point-max))))))
 
@@ -231,7 +231,7 @@
   (alonso--on-chunk " continues")
   (alonso-tests--assert
    "without thinking, the tool->response separator appears (and only once)"
-   (equal "\n🔎 glob\n  pattern: *.el\n\n\ndirect post-tool response continues"
+   (equal "\n🔎 glob\n  pattern:\n    *.el\n\n\ndirect post-tool response continues"
           (with-current-buffer buf
             (buffer-substring-no-properties start (point-max))))))
 

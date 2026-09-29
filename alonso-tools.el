@@ -49,22 +49,12 @@ path.  Used in the confirmation question prompt."
     (or (alonso--hval input "path") ""))
    (t "")))
 
-(defun alonso--tool-detail-propertized (name input)
-  "Return the tool NAME detail (command/pattern/path) propertized in
-`alonso-command-face' (blue), for the recorded confirmation line."
-  (let ((v (alonso--tool-detail-string name input)))
-    (if (string-empty-p v)
-        ""
-      (propertize v 'face 'alonso-command-face))))
-
 (defun alonso--confirm-question (name input)
   "Build the minibuffer confirmation question for tool NAME with INPUT.
 Prefixes the tool's unicode icon and, when available, shows the command
 (`shell'), pattern (`grep'/`glob') or path (file tools) right after the name,
 e.g. \"🖥 Run tool: shell · ps aux? \".  The minibuffer itself cannot render
-colors, so the detail is shown as plain text here (the recorded line in the
-conversation buffer shows it in blue via
-`alonso--tool-detail-propertized')."
+colors, so the detail is shown as plain text here."
   (let ((detail (alonso--tool-detail-string name input)))
     (if (string-empty-p detail)
         (format "%s Run tool: %s? " (alonso--tool-icon name) name)
@@ -88,11 +78,18 @@ conversation buffer shows it in blue via
                 "\n")
      nl)))
 
+(defun alonso--indent-lines (text prefix)
+  "Return TEXT with each of its lines prefixed by PREFIX."
+  (mapconcat (lambda (line) (concat prefix line))
+             (split-string (format "%s" text) "\n")
+             "\n"))
+
 (defun alonso--format-tool-call (name input)
   "Return a propertized string describing tool NAME with its INPUT.
 For `search_replace' the search is shown in red prefixed with `-' and the
-replace in dark green prefixed with `+', diff style.  Other tools show all
-their parameters as `key: value' lines."
+replace in dark green prefixed with `+', diff style.  Other tools show each
+parameter as a `key:' label (in `alonso-command-face', bold) followed by its
+value indented on the line below."
   (if (hash-table-p input)
       (cond
        ((equal name "search_replace")
@@ -108,9 +105,13 @@ their parameters as `key: value' lines."
                        'face 'alonso-replace-face))))
        (t
         (let ((pairs (alonso--tool-input-pairs input)))
-          (mapconcat (lambda (pair)
-                       (format "  %s: %s" (car pair) (cdr pair)))
-                     pairs "\n"))))
+          (mapconcat
+           (lambda (pair)
+             (format "  %s\n%s"
+                     (propertize (format "%s:" (car pair))
+                                 'face 'alonso-command-face)
+                     (alonso--indent-lines (cdr pair) "    ")))
+           pairs "\n"))))
     ""))
 
 (defun alonso--show-tool-call (_id name input)
@@ -119,7 +120,7 @@ their parameters as `key: value' lines."
 Read-only tools (which run without confirmation) get a title line with the
 tool's icon and name, e.g. \"📄 read\".  Mutating tools (which ask for an
 individual confirmation) show the confirmation question line right away —
-the tool's icon and the `Run tool: <name> · <detail>?' prompt — followed by
+the tool's icon and the `Run tool: <name>?' prompt — followed by
 the parameters beneath it.  The `[allowed]' / `[denied]' prefix is later
 prepended to the front of that same question line by
 `alonso--record-tool-confirmation' once the user answers, so the
@@ -127,13 +128,11 @@ question is visible from the start (not only after the answer).  Returns the
 buffer position of the visible title/parameters."
   (alonso--render-answer)
   (let* ((read-only (alonso--tool-read-only-p name))
-         (detail (alonso--tool-detail-propertized name input))
          (header (if read-only
                      (format "\n%s %s\n" (alonso--tool-icon name) name)
                    (concat "\n"
                            (alonso--tool-icon name)
                            " Run tool: " name
-                           (if (string-empty-p detail) "" (concat " · " detail))
                            "? \n")))
          (pos (alonso--insert-propertized header)))
     ;; point at the start of the visible line (title or question), where the
@@ -190,7 +189,7 @@ than the window."
 (defun alonso--record-tool-confirmation (_name _input allowed &optional trust)
   "Record the tool-confirmation decision for a mutating tool call in the
 conversation buffer.  ALLOWED non-nil when the user permitted it.  The
-confirmation question line (the `Run tool: <name> · <detail>?' prompt) was
+confirmation question line (the `Run tool: <name>?' prompt) was
 already inserted by `alonso--show-tool-call'; this function merely
 prepends the visible `[allowed]' / `[denied]' tag (in the tool / error face)
 to the front of that same line (at `alonso--tool-call-pos'), so the

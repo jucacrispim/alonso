@@ -76,8 +76,8 @@
 ;; PaleVioletRed4 (#8b475d, set in pdj-theme.el) and separated from the
 ;; answer by two blank lines. Mutating tool calls show their confirmation
 ;; question right away, one at a time — the tool's icon and the
-;; `Run tool: <name> · <detail>?' prompt, e.g. "🖥 Run tool: shell · ps aux?",
-;; followed by the parameters beneath it; once the user answers, the
+;; `Run tool: <name>?' prompt, e.g. "🖥 Run tool: shell?", followed by the
+;; parameters beneath it; once the user answers, the
 ;; `[allowed]' / `[denied]' tag is prepended to the front of that same line.
 ;;
 ;; A prompt whose text starts with "#" is treated as a local hook: the bridge

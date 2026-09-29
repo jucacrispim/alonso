@@ -73,32 +73,61 @@
               (alonso--show-tool-call "call_1" "search_replace" sr-input)
               (alonso--record-tool-confirmation "search_replace" sr-input t))))
   (alonso-tests--assert
-   "allowed confirmation is recorded in the buffer (icon + path in blue)"
+   "allowed confirmation is recorded in the buffer (icon + tool name)"
    (string-match-p
-    (regexp-quote "[allowed] 🔁 Run tool: search_replace · /tmp/x.txt? ")
+    (regexp-quote "[allowed] 🔁 Run tool: search_replace? ")
     (with-current-buffer buf (buffer-string))))
   (let ((text (with-current-buffer buf
                 (buffer-substring-no-properties start (point-max)))))
     (alonso-tests--assert
      "question is shown before the parameters (top of the tool call)"
      (let ((qpos (string-match
-                  (regexp-quote "[allowed] 🔁 Run tool: search_replace · /tmp/x.txt? ")
+                  (regexp-quote "[allowed] 🔁 Run tool: search_replace? ")
                   text))
            (dpos (string-match (regexp-quote "path: /tmp/x.txt") text)))
        (and qpos dpos (< qpos dpos)))))
   (alonso-tests--assert
    "question points to the visible confirmation line"
-   (equal "[allowed] 🔁 Run tool: search_replace · /tmp/x.txt? "
+   (equal "[allowed] 🔁 Run tool: search_replace? "
           (with-current-buffer buf
             (buffer-substring-no-properties
-             pos (+ pos (length "[allowed] 🔁 Run tool: search_replace · /tmp/x.txt? "))))))
-  (alonso-tests--assert
-   "command fragment is propertized in blue"
-   (get-text-property
-    (+ pos (length "[allowed] 🔁 Run tool: search_replace · ")) 'face buf))
+             pos (+ pos (length "[allowed] 🔁 Run tool: search_replace? "))))))
   (alonso-tests--assert
    "keep-question-visible does not break without a visible window (batch)"
    (progn (alonso--keep-question-visible pos) t)))
+
+;; A plain (generic) tool call: the header no longer repeats the command (which
+;; used to duplicate the parameter block); the parameter is instead shown as a
+;; bold `command:' label with its value indented on the following line, and the
+;; value appears exactly once in the whole tool-call display.
+(let* ((buf (get-buffer "alonso"))
+       (start (with-current-buffer buf (point-max)))
+       (shell-input (alonso--json-plist-to-hash (list "command" "ls -la"))))
+  (alonso--show-tool-call "call_2" "shell" shell-input)
+  (let ((text (with-current-buffer buf
+                (buffer-substring-no-properties start (point-max)))))
+    (alonso-tests--assert
+     "mutating tool header does not repeat the command detail"
+     (and (string-match-p (regexp-quote "🖥 Run tool: shell? ") text)
+          (not (string-match-p (regexp-quote "Run tool: shell · ") text))))
+    (alonso-tests--assert
+     "the command appears exactly once (only in the parameter block)"
+     (let ((n 0) (from 0))
+       (while (string-match (regexp-quote "ls -la") text from)
+         (setq from (match-end 0))
+         (cl-incf n))
+       (= 1 n)))
+    (alonso-tests--assert
+     "the command label and value are on separate lines, value indented"
+     (string-match-p (regexp-quote "  command:\n    ls -la") text)))
+  (alonso-tests--assert
+   "the command label is propertized in the bold command face"
+   (let ((lpos (with-current-buffer buf
+                 (- (save-excursion
+                      (goto-char start)
+                      (search-forward "command:" nil t))
+                    (length "command:")))))
+     (eq 'alonso-command-face (get-text-property lpos 'face buf)))))
 
 ;; No preceding tool call: the confirmation falls back to the end of the buffer.
 (let* ((buf (get-buffer "alonso"))
