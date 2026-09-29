@@ -43,6 +43,7 @@
 (declare-function alonso--start-spinner "alonso")
 (declare-function alonso--stop-spinner "alonso")
 (declare-function alonso--mode-line-session "alonso")
+(declare-function alonso--mode-line-model "alonso")
 (declare-function alonso--setup-input-mode-line "alonso")
 (declare-function alonso--prompt-params "alonso")
 (declare-function alonso--request-annotation "alonso")

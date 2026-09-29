@@ -22,7 +22,7 @@
 ;;; `alonso--prompt-params' serializes as the bridge's `images' array.
 
 ;; Reset the per-request overrides so the image tests see a clean prompt.
-(with-current-buffer (get-buffer-create "*llm-bridge-input*")
+(with-current-buffer (get-buffer-create "alonso-chat")
   (setq alonso-request-provider ""
         alonso-request-model ""
         alonso-request-thinking 'unset
@@ -203,7 +203,7 @@
    (null (alonso--clipboard-image))))
 
 ;; The explicit parameter commands insert into the input buffer.
-(let ((input (get-buffer-create "*llm-bridge-input*")))
+(let ((input (get-buffer-create "alonso-chat")))
   (unwind-protect
       (progn
         (with-current-buffer input (erase-buffer))
@@ -216,7 +216,7 @@
     (with-current-buffer input (erase-buffer))))
 
 ;; Sending collects the images as the `images' array and clears the buffer.
-(let ((input (get-buffer-create "*llm-bridge-input*"))
+(let ((input (get-buffer-create "alonso-chat"))
       (sent nil))
   (unwind-protect
       (progn
@@ -243,7 +243,7 @@
     (with-current-buffer input (erase-buffer))))
 
 ;; Sending only an image (no text) sends the minimal fallback text.
-(let ((input (get-buffer-create "*llm-bridge-input*"))
+(let ((input (get-buffer-create "alonso-chat"))
       (sent nil))
   (unwind-protect
       (progn
@@ -314,8 +314,8 @@
           (string-match-p "\n\\[imagem" body)))))
 
 ;; Sending image + text echoes the image before the caption (regression).
-(let ((input (get-buffer-create "*llm-bridge-input*"))
-      (conv (get-buffer-create "*llm-bridge*")))
+(let ((input (get-buffer-create "alonso-chat"))
+      (conv (get-buffer-create "alonso")))
   (unwind-protect
       (progn
         (with-current-buffer conv (setq buffer-read-only nil) (erase-buffer))

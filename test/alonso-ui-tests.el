@@ -44,13 +44,16 @@
    "session model comes from turn_end"
    (equal "deepseek-chat" alonso-session-model))
   (alonso-tests--assert
-   "mode-line shows sent/received/cache/model"
-   (string-match-p "↑42 ↓23 ⚡1000/124 deepseek-chat"
-                   (alonso--mode-line-session)))
+   "input mode-line shows sent/received/cache (no model)"
+   (and (string-match-p "↑42 ↓23 ⚡1000/124" (alonso--mode-line-session))
+        (not (string-match-p "deepseek" (alonso--mode-line-session)))))
+  (alonso-tests--assert
+   "conversation mode-line shows the session model"
+   (string-match-p "\\[deepseek-chat\\]" (alonso--mode-line-model)))
   (alonso-tests--assert
    "turn inserts a summary into the conversation"
    (string-match-p "turn: sent 30, received 15, cache 900/120"
-                   (with-current-buffer (get-buffer "*llm-bridge*")
+                   (with-current-buffer (get-buffer "alonso")
                      (buffer-string))))
   (alonso--reset-session)
   (alonso-tests--assert
@@ -75,7 +78,7 @@
   (alonso--on-turn-end ev)
   (alonso-tests--assert
    "no cache: mode-line omits the ⚡ fragment"
-   (and (string-match-p "↑5 ↓3 gemini" (alonso--mode-line-session))
+   (and (string-match-p "↑5 ↓3" (alonso--mode-line-session))
         (not (string-match-p "⚡" (alonso--mode-line-session)))))
   (alonso--reset-session))
 
@@ -110,10 +113,10 @@
 ;;; Regression: first open — the input buffer does not exist yet when the
 ;;; mode-line setup runs; even so, the token indicator must be installed.
 
-(let ((input (get-buffer "*llm-bridge-input*")))
+(let ((input (get-buffer "alonso-chat")))
   (when input (kill-buffer input))
   (alonso--setup-input-mode-line)
-  (let ((buf (get-buffer "*llm-bridge-input*")))
+  (let ((buf (get-buffer "alonso-chat")))
     (alonso-tests--assert
      "setup creates the input buffer if missing" buf)
     (alonso-tests--assert
@@ -134,7 +137,7 @@
 
 ;;; Thinking — two-blank-lines separator before the response
 
-(let* ((buf (get-buffer "*llm-bridge*"))
+(let* ((buf (get-buffer "alonso"))
        (start (with-current-buffer buf (point-max))))
   (setq alonso--thinking-separator-pending nil)
   (alonso--on-thinking "model reasoning")
@@ -152,7 +155,7 @@
           (with-current-buffer buf
             (buffer-substring-no-properties start (point-max))))))
 
-(let* ((buf (get-buffer "*llm-bridge*"))
+(let* ((buf (get-buffer "alonso"))
        (start (with-current-buffer buf (point-max))))
   (setq alonso--thinking-separator-pending nil)
   (alonso--on-chunk "direct response")
@@ -165,7 +168,7 @@
 ;;; Tool → model: two blank lines between the tool output and the model's
 ;;; next thinking/response
 
-(let* ((buf (get-buffer "*llm-bridge*"))
+(let* ((buf (get-buffer "alonso"))
        (start (with-current-buffer buf (point-max))))
   (setq alonso--after-tool-separator-pending nil)
   ;; simulate: tool_call shown and result sent back to the bridge
@@ -187,7 +190,7 @@
           (with-current-buffer buf
             (buffer-substring-no-properties start (point-max))))))
 
-(let* ((buf (get-buffer "*llm-bridge*"))
+(let* ((buf (get-buffer "alonso"))
        (start (with-current-buffer buf (point-max))))
   (setq alonso--after-tool-separator-pending nil)
   (alonso--show-tool-call
@@ -315,7 +318,7 @@
 (alonso-tests--assert
  "hook_action output is inserted into the conversation"
  (string-match-p "a\nb"
-                 (with-current-buffer (get-buffer "*llm-bridge*")
+                 (with-current-buffer (get-buffer "alonso")
                    (buffer-string))))
 (alonso-tests--assert
  "hook_action clears the in-turn state (no turn_end for hooks)"
@@ -331,14 +334,14 @@
   (alonso-tests--assert
    "hook_action error is shown in the conversation"
    (string-match-p "\\[hook naoexiste\\] error: hook: not found: naoexiste"
-                   (with-current-buffer (get-buffer "*llm-bridge*")
+                   (with-current-buffer (get-buffer "alonso")
                      (buffer-string)))))
 
 ;; A prompt whose text starts with "#" goes through the hook path: it echoes the
 ;; command and sends it as a `prompt' (the bridge decides it is a hook), marking
 ;; the turn in progress.  A normal prompt is unaffected.
 (let ((sent nil)
-      (start (with-current-buffer (get-buffer "*llm-bridge*") (point-max))))
+      (start (with-current-buffer (get-buffer "alonso") (point-max))))
   (setq alonso-in-turn nil alonso-pending-tools nil)
   (cl-letf (((symbol-function 'alonso--ensure-ready) (lambda ()))
             ((symbol-function 'alonso--send)
@@ -353,7 +356,7 @@
   (alonso-tests--assert
    "hook prompt echoes the command in the conversation"
    (string-match-p ">>> #ls -l"
-                   (with-current-buffer (get-buffer "*llm-bridge*")
+                   (with-current-buffer (get-buffer "alonso")
                      (buffer-substring-no-properties start (point-max)))))
   (alonso-tests--assert
    "hook prompt marks the turn in progress"
@@ -369,8 +372,8 @@
    (equal "" (alonso--mode-line-status)))
   (setq alonso-in-turn t)
   (alonso-tests--assert
-   "mode-line status shows llm-bridge... when in turn (no spinner)"
-   (equal " [llm-bridge…]" (alonso--mode-line-status)))
+   "mode-line status shows alonso... when in turn (no spinner)"
+   (equal " [alonso…]" (alonso--mode-line-status)))
   (alonso--start-spinner)
   (alonso-tests--assert
    "mode-line status shows braille spinner when active"
@@ -422,7 +425,7 @@
 ;; With live rendering off, the segment is only tracked (not rendered) until
 ;; it closes.
 (let ((alonso-render-markdown-live nil)
-      (buf (get-buffer "*llm-bridge*")))
+      (buf (get-buffer "alonso")))
   (with-current-buffer buf
     (let ((inhibit-read-only t)) (erase-buffer)))
   (setq alonso--answer-start nil
@@ -447,7 +450,7 @@
 ;; With live rendering on, every chunk re-renders the segment as it streams
 ;; (the segment stays open until it closes).
 (let ((alonso-render-markdown-live t)
-      (buf (get-buffer "*llm-bridge*")))
+      (buf (get-buffer "alonso")))
   (with-current-buffer buf
     (let ((inhibit-read-only t)) (erase-buffer)))
   (setq alonso--answer-start nil
@@ -480,7 +483,7 @@
             (buffer-substring-no-properties (point-min) (point-max))))))
 
 ;; turn_end closes (and renders) the pending answer
-(let ((buf (get-buffer "*llm-bridge*"))
+(let ((buf (get-buffer "alonso"))
       (ev (make-hash-table :test 'equal)))
   (with-current-buffer buf
     (let ((inhibit-read-only t)) (erase-buffer)))
@@ -503,7 +506,7 @@
         (eq (get-text-property 4 'face buf) 'alonso-md-heading-2-face))))
 
 ;; thinking keeps the raw markers
-(let ((buf (get-buffer "*llm-bridge*")))
+(let ((buf (get-buffer "alonso")))
   (with-current-buffer buf
     (let ((start (point-max))
           (alonso--answer-start nil)

@@ -87,7 +87,7 @@
 (alonso-tests--assert
  "chunk was inserted into the conversation buffer"
  (string-match-p "hi"
-                 (with-current-buffer (get-buffer "*llm-bridge*")
+                 (with-current-buffer (get-buffer "alonso")
                    (buffer-string))))
 
 ;;; Tools (file ops)
@@ -290,7 +290,7 @@
 (defun alonso-tests--with-req (model thinking effort fn)
   "Run FN with the per-request overrides set to MODEL/THINKING/EFFORT
 (buffer-local to the input buffer)."
-  (let ((buf (get-buffer-create "*llm-bridge-input*")))
+  (let ((buf (get-buffer-create "alonso-chat")))
     (with-current-buffer buf
       (setq alonso-request-model model)
       (setq alonso-request-thinking thinking)

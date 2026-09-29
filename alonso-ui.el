@@ -52,12 +52,12 @@
 
 ;;; Conversation/input buffers
 
-(defcustom alonso-buffer-name "*llm-bridge*"
+(defcustom alonso-buffer-name "alonso"
   "Name of the conversation buffer."
   :type 'string
   :group 'alonso)
 
-(defcustom alonso-input-buffer-name "*llm-bridge-input*"
+(defcustom alonso-input-buffer-name "alonso-chat"
   "Name of the buffer where the user types prompts."
   :type 'string
   :group 'alonso)
@@ -271,14 +271,22 @@ chunks do not restart the spinner from the beginning."
 (defun alonso--mode-line-status ()
   "Return the mode-line status fragment for the conversation buffer.
 Shows the braille spinner while a turn is in flight (from prompt to
-turn_end/error/cancelled), or `[llm-bridge…]' during a turn with no spinner."
+turn_end/error/cancelled), or `[alonso…]' during a turn with no spinner."
   (cond
    (alonso--spinner-active
     (format " [%s]" (aref alonso--spinner-frames
                           alonso--spinner-index)))
    (alonso-in-turn
-    " [llm-bridge…]")
+    " [alonso…]")
    (t "")))
+
+(defun alonso--mode-line-model ()
+  "Return the mode-line fragment with the model of the current session.
+Empty until the first `turn_end' reports a model."
+  (if alonso-session-model
+      (propertize (format " [%s]" alonso-session-model)
+                  'help-echo "Model used in the current session")
+    ""))
 
 ;;; Event render handlers (dispatched by the client's `--handle-line')
 
@@ -457,6 +465,15 @@ script's combined output is inserted as plain text."
         (setq-local mode-line-misc-info
                     (append mode-line-misc-info
                             (list '(:eval (alonso--mode-line-status))))))
+      ;; The conversation bar shows only what matters: the buffer name, the
+      ;; status/spinner and the session model.  Drop the modes construct
+      ;; (it would only render "(Fundamental LB)", noise for a chat log).
+      (setq-local mode-line-modes "")
+      (unless (cl-member '(:eval (alonso--mode-line-model))
+                         mode-line-misc-info :test #'equal)
+        (setq-local mode-line-misc-info
+                    (append mode-line-misc-info
+                            (list '(:eval (alonso--mode-line-model))))))
       ;; Hide the position (line/column/%) — the buffer is a chat log whose
       ;; size changes at every chunk, so the position counter would flicker
       ;; frantically during streaming and make the mode-line (and the
@@ -685,20 +702,19 @@ from the clipboard when there is one (see `alonso-yank')."
     (yank-media-handler "image/.*" #'alonso--yank-media-image)))
 
 (defun alonso--mode-line-session ()
-  "Return the mode-line fragment with the session token usage and model.
-Shows tokens sent (↑, input), tokens received (↓, output), the prompt-cache
-hit/miss totals (⚡, shown only when the provider reports any) and the model
-of the current session, e.g. \" [↑12 ↓8 ⚡900/124 deepseek-chat]\"."
+  "Return the mode-line fragment with the session token usage.
+Shows tokens sent (↑, input), tokens received (↓, output) and the prompt-cache
+hit/miss totals (⚡, shown only when the provider reports any), e.g.
+\" [↑12 ↓8 ⚡900/124]\"."
   (let* ((hit alonso-session-cache-hit-tokens)
          (miss alonso-session-cache-miss-tokens)
          (cache (if (> (+ hit miss) 0) (format "⚡%d/%d " hit miss) ""))
-         (s (format " [↑%d ↓%d %s%s]"
+         (s (format " [↑%d ↓%d %s]"
                     alonso-session-input-tokens
                     alonso-session-output-tokens
-                    cache
-                    (or alonso-session-model "?"))))
+                    cache)))
     (propertize s 'help-echo
-                "↑ tokens sent · ↓ tokens received · ⚡ prompt-cache hit/miss · session model")))
+                "↑ tokens sent · ↓ tokens received · ⚡ prompt-cache hit/miss")))
 
 (defun alonso--mode-line-request ()
   "Return the mode-line fragment describing the per-request overrides.

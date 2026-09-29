@@ -52,7 +52,7 @@
 ;;; parameters/diff) and the `[allowed]' / `[denied]' tag is prepended to the
 ;;; front of that same line after the user answers
 
-(let* ((buf (get-buffer "*llm-bridge*"))
+(let* ((buf (get-buffer "alonso"))
        (start (with-current-buffer buf (point-max)))
        (ret (alonso--insert-propertized "test-text\n")))
   (alonso-tests--assert
@@ -63,7 +63,7 @@
 
 ;; A search_replace with a large diff: the question line appears *before* the
 ;; parameters (at the top) and the `[allowed]' tag is prepended to it.
-(let* ((buf (get-buffer "*llm-bridge*"))
+(let* ((buf (get-buffer "alonso"))
        (start (with-current-buffer buf (point-max)))
        (sr-input (alonso--json-plist-to-hash
                   (list "path" "/tmp/x.txt"
@@ -101,7 +101,7 @@
    (progn (alonso--keep-question-visible pos) t)))
 
 ;; No preceding tool call: the confirmation falls back to the end of the buffer.
-(let* ((buf (get-buffer "*llm-bridge*"))
+(let* ((buf (get-buffer "alonso"))
        (start (with-current-buffer buf (point-max)))
        (alonso--tool-call-pos nil)
        (shell-input (alonso--json-plist-to-hash (list "command" "ps aux")))
@@ -135,7 +135,7 @@
     ((run-batch (queue answers)
        (let ((sent '())
              (asked 0)
-             (start (with-current-buffer (get-buffer "*llm-bridge*")
+             (start (with-current-buffer (get-buffer "alonso")
                       (point-max))))
          (cl-letf (((symbol-function 'alonso--send)
                     (lambda (method &optional _params) (push method sent)))
@@ -159,13 +159,13 @@
            (setq alonso--confirm-queue queue)
            (setq alonso--confirm-timer nil)
            ;; Anchor every `[denied]'/'[allowed]' recorded by the run to the end
-           ;; of the *llm-bridge* buffer (the captured range) so the test can
+           ;; of the alonso buffer (the captured range) so the test can
            ;; count them below.
            (setq alonso--tool-call-pos
-                 (with-current-buffer (get-buffer "*llm-bridge*") (point-max)))
+                 (with-current-buffer (get-buffer "alonso") (point-max)))
            (alonso--confirm-pending))
          (list asked (nreverse sent)
-               (with-current-buffer (get-buffer "*llm-bridge*")
+               (with-current-buffer (get-buffer "alonso")
                  (buffer-substring-no-properties start (point-max)))))))
   ;; 1) Deny the first of three tools: no further questions, every remaining
   ;; tool is auto-denied and the turn is cancelled.

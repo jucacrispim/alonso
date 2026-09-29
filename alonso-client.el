@@ -269,10 +269,10 @@ E.g. \"low\", \"medium\", \"high\".  Empty string = omit (provider default)."
   :group 'alonso)
 (make-variable-buffer-local 'alonso-request-reasoning-effort)
 
-;; The input buffer name is a defcustom defined in alonso-ui.el;
-;; declare it here first so the per-request override helpers do not trigger
-;; free-variable warnings.
-(defvar alonso-input-buffer-name "*llm-bridge-input*")
+;; The input buffer name is a defcustom defined in alonso-ui.el; declare it
+;; here (with no value, so the defcustom remains the single source of truth)
+;; so the per-request override helpers do not trigger free-variable warnings.
+(defvar alonso-input-buffer-name)
 
 (defun alonso--request-buffer ()
   "Return the input buffer (creating it if needed)."
