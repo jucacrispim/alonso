@@ -153,17 +153,26 @@ Set on the first `chunk' of a segment by `alonso--answer-begin' and
 cleared by `alonso--render-answer' once the segment is rendered.")
 
 (defvar alonso--turn-answer-start nil
-  "Marker at the start of the current turn's model output, or nil.
-Set by `alonso--prompt-send' just before the prompt is sent and used by
+  "Marker at the start of the current turn's last answer segment, or nil.
+Set by `alonso--prompt-send' just before the prompt is sent (as a fallback,
+in case the turn produces no answer segment at all) and re-pointed by
+`alonso--answer-begin' at the start of every new answer segment.  Used by
 `alonso--show-answer-start' when the turn ends, to scroll the window back
-to the beginning of an answer taller than the window.")
+to the beginning of the final answer taller than the window.")
 
 (defun alonso--answer-begin ()
-  "Start a new answer segment if one is not already open."
+  "Start a new answer segment if one is not already open.
+Also re-points `alonso--turn-answer-start' at this segment's start, so
+that a turn whose output is split (answer, thinking, answer) marks its
+*last* answer segment — the final answer — as the one to scroll back to
+when the turn ends."
   (unless alonso--answer-start
-    (setq alonso--answer-start
-          (with-current-buffer (alonso--get-buffer)
-            (copy-marker (point-max))))))
+    (with-current-buffer (alonso--get-buffer)
+      (let ((pos (point-max)))
+        (setq alonso--answer-start (copy-marker pos))
+        (when (markerp alonso--turn-answer-start)
+          (set-marker alonso--turn-answer-start nil))
+        (setq alonso--turn-answer-start (copy-marker pos))))))
 
 (defun alonso--render-answer ()
   "Render the Markdown of the current answer segment and close it.
@@ -197,21 +206,20 @@ never shown with a half-written marker hidden."
 (defun alonso--show-answer-start ()
   "Leave the conversation window showing the start of the turn's answer.
 Called when the turn ends: while streaming the window stays glued to the
-end (`alonso--insert-propertized'), so for an answer taller than the
-window the beginning ends up scrolled out of view.  Scroll back to the
-beginning of the answer so the user sees where it started and can scroll
-down at will.  No-op when the answer fits in the window (the end is then
-already visible, i.e. the whole answer is on screen) or when the buffer is
-not displayed."
+end (`alonso--insert-propertized'), so the beginning of the answer ends up
+scrolled out of view.  Scroll back to the beginning of the *last* answer
+segment (see `alonso--turn-answer-start'), so that a turn split into
+several segments leaves the final answer at the top rather than the first
+one, and a short answer is shown from its start (with blank space below)
+instead of glued to the bottom.  No-op when the buffer is not displayed or
+when there is no answer segment to scroll to."
   (let* ((buf (alonso--get-buffer))
          (start alonso--turn-answer-start)
          (win (get-buffer-window buf t)))
     (when (and win (markerp start) (marker-position start))
       (with-current-buffer buf
-        (let ((beg (marker-position start))
-              (end (point-max)))
-          (when (> (count-screen-lines beg end nil win)
-                   (window-body-height win))
+        (let ((beg (marker-position start)))
+          (when (< beg (point-max))
             (set-window-start win beg)
             (set-window-point win beg)))))))
 

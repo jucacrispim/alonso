@@ -555,7 +555,9 @@
           (= (window-start win) answer-beg)
           (= (window-point win) answer-beg))))
 
-  ;; A short answer (fits in the window) leaves the scroll untouched.
+  ;; A short answer (shorter than the window) is scrolled back too, so it is
+  ;; shown from its start (with blank space below) instead of glued to the
+  ;; bottom of the window.
   (with-current-buffer buf
     (let ((inhibit-read-only t))
       (erase-buffer)
@@ -567,7 +569,7 @@
   (with-current-buffer buf
     (setq alonso--turn-answer-start (copy-marker (point-max))))
   (alonso--on-chunk "resposta curta\n")
-  (let ((before (window-start win))
+  (let ((answer-beg (marker-position alonso--turn-answer-start))
         (ev (make-hash-table :test 'equal)))
     (puthash "event" "turn_end" ev)
     (puthash "stop_reason" "END_TURN" ev)
@@ -576,8 +578,53 @@
     (puthash "output_tokens" 1 ev)
     (alonso--on-turn-end ev)
     (alonso-tests--assert
-     "turn_end leaves a short answer's scroll untouched"
-     (= (window-start win) before))))
+     "turn_end scrolls a short answer back to its beginning"
+     (and (> answer-beg (point-min))
+          (= (window-start win) answer-beg)
+          (= (window-point win) answer-beg)))))
+
+;; When a turn is split into several answer segments (answer, thinking,
+;; answer), turn_end scrolls back to the *last* segment (the final answer),
+;; not to the first one.
+(let ((win (selected-window))
+      (buf (alonso--get-buffer)))
+  (set-window-buffer win buf)
+  (with-current-buffer buf
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (insert ">>> pergunta\n\n")))
+  (setq alonso--answer-start nil
+        alonso--thinking-separator-pending nil
+        alonso--after-tool-separator-pending nil
+        alonso-show-thinking nil)
+  (with-current-buffer buf
+    (setq alonso--turn-answer-start (copy-marker (point-max))))
+  ;; first answer segment (long enough to be taller than the window)
+  (alonso--on-chunk
+   (concat (mapconcat (lambda (i) (format "primeira %d" i))
+                      (number-sequence 1 40) "\n")
+           "\n"))
+  ;; the model goes back to thinking, closing the first segment
+  (alonso--on-thinking "pensando...\n")
+  (alonso--stop-spinner)
+  ;; the final answer segment starts here
+  (let ((final-beg (with-current-buffer buf (point-max))))
+    (alonso--on-chunk
+     (concat (mapconcat (lambda (i) (format "final %d" i))
+                        (number-sequence 1 80) "\n")
+             "\n"))
+    (let ((ev (make-hash-table :test 'equal)))
+      (puthash "event" "turn_end" ev)
+      (puthash "stop_reason" "END_TURN" ev)
+      (puthash "model" "deepseek-chat" ev)
+      (puthash "input_tokens" 1 ev)
+      (puthash "output_tokens" 1 ev)
+      (alonso--on-turn-end ev))
+    (alonso-tests--assert
+     "turn_end scrolls back to the final answer segment, not the first"
+     (and (> final-beg (point-min))
+          (= (window-start win) final-beg)
+          (= (window-point win) final-beg)))))
 
 (provide 'alonso-ui-tests)
 
