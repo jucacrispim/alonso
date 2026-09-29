@@ -53,7 +53,7 @@
    "session model comes from turn_end"
    (equal "deepseek-chat" alonso-session-model))
   (alonso-tests--assert
-   "input mode-line shows sent/received/cache (no model)"
+   "conversation mode-line shows sent/received/cache (no model)"
    (and (string-match-p "↑42 ↓23 ⚡1k/124" (alonso--mode-line-session))
         (not (string-match-p "deepseek" (alonso--mode-line-session)))))
   (alonso-tests--assert
@@ -120,7 +120,8 @@
         (= 12 alonso-session-output-tokens))))
 
 ;;; Regression: first open — the input buffer does not exist yet when the
-;;; mode-line setup runs; even so, the token indicator must be installed.
+;;; mode-line setup runs; even so, the request indicator must be installed.
+;;; The session token usage is installed on the conversation buffer instead.
 
 (let ((input (get-buffer "alonso-chat")))
   (when input (kill-buffer input))
@@ -129,20 +130,33 @@
     (alonso-tests--assert
      "setup creates the input buffer if missing" buf)
     (alonso-tests--assert
-     "setup installs the indicator even on the first open"
+     "setup installs the request indicator even on the first open"
      (with-current-buffer buf
-       (cl-member '(:eval (alonso--mode-line-session))
+       (cl-member '(:eval (alonso--mode-line-request))
                   mode-line-misc-info :test #'equal)))
     ;; idempotency: repeating does not duplicate
     (alonso--setup-input-mode-line)
     (alonso-tests--assert
-     "repeated setup does not duplicate the indicator"
+     "repeated setup does not duplicate the request indicator"
      (with-current-buffer buf
        (let ((n 0))
          (dolist (el mode-line-misc-info)
-           (when (equal el '(:eval (alonso--mode-line-session)))
+           (when (equal el '(:eval (alonso--mode-line-request)))
              (cl-incf n)))
          (= n 1))))))
+
+;; The conversation bar carries the session token usage, with the
+;; status/spinner as the very last fragment.
+(let ((buf (alonso--get-buffer)))
+  (with-current-buffer buf
+    (alonso-tests--assert
+     "conversation mode-line installs the session indicator"
+     (cl-member '(:eval (alonso--mode-line-session))
+                mode-line-misc-info :test #'equal))
+    (alonso-tests--assert
+     "spinner/status is the last fragment of the conversation mode-line"
+     (equal (car (last mode-line-misc-info))
+            '(:eval (alonso--mode-line-status))))))
 
 ;;; Thinking — two-blank-lines separator before the response
 

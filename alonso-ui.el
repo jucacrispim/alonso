@@ -479,20 +479,26 @@ script's combined output is inserted as plain text."
         (setq buffer-read-only t))
       (unless alonso-mode
         (alonso-mode 1))
-      (unless (cl-member '(:eval (alonso--mode-line-status))
-                         mode-line-misc-info :test #'equal)
-        (setq-local mode-line-misc-info
-                    (append mode-line-misc-info
-                            (list '(:eval (alonso--mode-line-status))))))
       ;; The conversation bar shows only what matters: the buffer name, the
-      ;; status/spinner and the session model.  Drop the modes construct
-      ;; (it would only render "(Fundamental LB)", noise for a chat log).
+      ;; session model, the session token usage and, at the very end, the
+      ;; status/spinner.  Drop the modes construct (it would only render
+      ;; "(Fundamental LB)", noise for a chat log).
       (setq-local mode-line-modes "")
       (unless (cl-member '(:eval (alonso--mode-line-model))
                          mode-line-misc-info :test #'equal)
         (setq-local mode-line-misc-info
                     (append mode-line-misc-info
                             (list '(:eval (alonso--mode-line-model))))))
+      (unless (cl-member '(:eval (alonso--mode-line-session))
+                         mode-line-misc-info :test #'equal)
+        (setq-local mode-line-misc-info
+                    (append mode-line-misc-info
+                            (list '(:eval (alonso--mode-line-session))))))
+      (unless (cl-member '(:eval (alonso--mode-line-status))
+                         mode-line-misc-info :test #'equal)
+        (setq-local mode-line-misc-info
+                    (append mode-line-misc-info
+                            (list '(:eval (alonso--mode-line-status))))))
       ;; Hide the position (line/column/%) — the buffer is a chat log whose
       ;; size changes at every chunk, so the position counter would flicker
       ;; frantically during streaming and make the mode-line (and the
@@ -755,17 +761,13 @@ override is set."
       (propertize ann 'help-echo "Per-request overrides (C-c a m / t / e)"))))
 
 (defun alonso--setup-input-mode-line ()
-  "Install the session and request indicators in the input buffer's
-mode-line (idempotent).  Creates the input buffer if it does not exist yet
-(on a fresh open)."
+  "Install the request-override indicator in the input buffer's mode-line
+\(idempotent).  Creates the input buffer if it does not exist yet (on a
+fresh open).  The session token usage lives in the conversation buffer's
+mode-line instead (see `alonso--get-buffer')."
   (let ((buf (or (get-buffer alonso-input-buffer-name)
                  (get-buffer-create alonso-input-buffer-name))))
     (with-current-buffer buf
-      (unless (cl-member '(:eval (alonso--mode-line-session))
-                         mode-line-misc-info :test #'equal)
-        (setq-local mode-line-misc-info
-                    (append mode-line-misc-info
-                            (list '(:eval (alonso--mode-line-session))))))
       (unless (cl-member '(:eval (alonso--mode-line-request))
                          mode-line-misc-info :test #'equal)
         (setq-local mode-line-misc-info
