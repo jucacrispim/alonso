@@ -340,6 +340,53 @@
     (with-current-buffer input (erase-buffer))
     (with-current-buffer conv (setq buffer-read-only nil) (erase-buffer))))
 
+;; Regression: the RET that opens the line below an inline image must not drop
+;; the attachment.  `electric-indent-mode' (on by default globally) reindents
+;; the previous line on RET and trims its trailing horizontal whitespace, which
+;; used to delete a space-carried placeholder: the image silently vanished and
+;; the prompt arrived with no attachment.  Two guards are tested here: the
+;; carrier is a non-whitespace zero-width space (so no whitespace cleanup can
+;; hit it), and `alonso-input-mode' disables electric indentation locally.
+(let ((buf (get-buffer-create "*alonso-img-ret-test*")))
+  (unwind-protect
+      (with-current-buffer buf
+        (erase-buffer)
+        (alonso-input-mode 1)
+        ;; Force electric indentation ON in this very buffer, so it is the
+        ;; carrier itself — not the buffer-local switch — under test.
+        (setq-local electric-indent-mode t)
+        (cl-letf (((symbol-function 'alonso--image-create)
+                   (lambda (_spec) 'dummy)))
+          (alonso--insert-image (list :url "https://example.com/a.png")))
+        (call-interactively #'newline)
+        (insert "caption")
+        (let* ((collected (alonso--buffer-collect))
+               (text (car collected))
+               (images (cdr collected)))
+          (alonso-tests--assert
+           "RET after an inline image keeps the attachment"
+           (= 1 (length images)))
+          (alonso-tests--assert
+           "RET after an inline image keeps the caption as text"
+           (equal "\ncaption" text))))
+    (kill-buffer buf)))
+
+;; `alonso-input-mode' turns electric indentation off buffer-locally, so a
+;; trailing placeholder (or any trailing whitespace) is never trimmed by RET
+;; even when `electric-indent-mode' is on globally.
+(let ((saved electric-indent-mode)
+      (buf (get-buffer-create "*alonso-img-eim-test*")))
+  (unwind-protect
+      (progn
+        (electric-indent-mode 1)
+        (with-current-buffer buf
+          (alonso-input-mode 1)
+          (alonso-tests--assert
+           "input mode turns electric-indent-mode off buffer-locally"
+           (null (buffer-local-value 'electric-indent-mode buf)))))
+    (electric-indent-mode (if saved 1 0))
+    (kill-buffer buf)))
+
 (provide 'alonso-image-tests)
 
 ;;; alonso-image-tests.el ends here

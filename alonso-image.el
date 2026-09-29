@@ -76,19 +76,28 @@ and is never displayed.  The image is scaled to `alonso-image-max-width'."
 
 (defun alonso--image-string (spec)
   "Return a string carrying the inline image of SPEC.
-The string is a single space holding the image in its `display' property and
-SPEC itself in the `alonso-image' property (so it can be collected at send
-time).  When the image cannot be displayed (a URL, or a format this Emacs
-cannot render) a textual placeholder — still carrying the `alonso-image'
-property — is returned instead.  The placeholder is `rear-nonsticky' so text
-typed right after it does not inherit the attachment properties."
-  ;; `rear-nonsticky' matters: text typed right after the placeholder is
-  ;; inserted with `insert-and-inherit', which would otherwise copy the
-  ;; `alonso-image' (and `display') properties onto it — making typed text
-  ;; look like another image and get dropped from the prompt at send time.
+The string is a single zero-width space (U+200B) holding the image in its
+`display' property and SPEC itself in the `alonso-image' property (so it can
+be collected at send time).  When the image cannot be displayed (a URL, or a
+format this Emacs cannot render) a textual placeholder — still carrying the
+`alonso-image' property — is returned instead.  The placeholder is
+`rear-nonsticky' so text typed right after it does not inherit the
+attachment properties."
+  ;; Two properties matter here:
+  ;;
+  ;; `rear-nonsticky' — text typed right after the placeholder is inserted
+  ;; with `insert-and-inherit', which would otherwise copy the `alonso-image'
+  ;; (and `display') properties onto it, making typed text look like another
+  ;; image and get dropped from the prompt at send time.
+  ;;
+  ;; zero-width space instead of a plain space — a trailing-whitespace cleanup
+  ;; (`delete-horizontal-space', run e.g. by `electric-indent-mode' when RET
+  ;; opens a new line) would delete a space-carried placeholder and silently
+  ;; drop the attachment; U+200B is not horizontal whitespace, so it survives.
+  ;; It is always replaced by the image via `display', so it is never visible.
   (let ((img (alonso--image-create spec)))
     (if img
-        (propertize " " 'display img 'alonso-image spec 'rear-nonsticky t)
+        (propertize "\u200b" 'display img 'alonso-image spec 'rear-nonsticky t)
       (propertize (format "[imagem: %s]"
                           (or (plist-get spec :path)
                               (plist-get spec :url)

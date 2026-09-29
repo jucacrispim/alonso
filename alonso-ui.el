@@ -697,6 +697,12 @@ from the clipboard when there is one (see `alonso-yank')."
             (define-key map (kbd "C-j") #'newline)
             map)
   (when alonso-input-mode
+    ;; Keep electric indentation out of this buffer.  The input is free-form
+    ;; prose, and `electric-indent-mode' (on by default) reindents the previous
+    ;; line when RET inserts a newline, calling `delete-horizontal-space' on it
+    ;; — which silently deletes an inline image placeholder (carried by a
+    ;; single space) sitting at the end of the line, dropping the attachment.
+    (setq-local electric-indent-mode nil)
     ;; Let `yank-media' (and `alonso-yank', via it) insert clipboard
     ;; images inline in this buffer.
     (yank-media-handler "image/.*" #'alonso--yank-media-image)))
