@@ -225,16 +225,20 @@ when there is no answer segment to scroll to."
 
 (defun alonso--pin-window-to-end ()
   "Re-anchor the conversation window at the end of the buffer.
-Called when a new prompt is started.  While streaming the window only
-follows the output when it is already showing the end (see
-`alonso--insert-propertized'), but `alonso--show-answer-start' leaves the
-window scrolled back to the start of the previous answer when a turn ends.
-Without re-anchoring, a conversation window that is not selected would stop
-following the model's output.  Always re-anchors to the end (like sending a
-message in a chat scrolls to the bottom); once the turn is streaming, a
-window the user scrolls up keeps its position because
-`alonso--insert-propertized' only follows when the window is at the end.
-No-op when the buffer is not displayed."
+Called whenever the stream (re)starts after the window was deliberately
+scrolled away from the end: when a new prompt is started (a previous turn
+left it scrolled back to its answer by `alonso--show-answer-start') and when
+the model resumes after a tool call (the confirmation scrolled the window to
+the tool line via `alonso--keep-question-visible', which may sit far above
+the end when the tool's output — e.g. a large diff — is taller than the
+window).  While streaming the window only follows the output when it is
+already showing the end (see `alonso--insert-propertized'), so without
+re-anchoring a conversation window that is not selected would stop following
+the model's output.  Always re-anchors to the end (like sending a message in
+a chat scrolls to the bottom); once the stream is running, a window the user
+scrolls up keeps its position because `alonso--insert-propertized' only
+follows when the window is at the end.  No-op when the buffer is not
+displayed."
   (let ((buf (alonso--get-buffer)))
     (with-current-buffer buf
       (let ((win (get-buffer-window buf t)))
@@ -313,7 +317,11 @@ Empty until the first `turn_end' reports a model."
   (when alonso--after-tool-separator-pending
     ;; The tool output finished and the model resumed: separate it with
     ;; two blank lines (three newlines), only on the first transition.
+    ;; Re-anchor at the end first: the confirmation left the window on the
+    ;; tool line (see `alonso--pin-window-to-end'), so without this the
+    ;; resuming output would not be followed.
     (setq alonso--after-tool-separator-pending nil)
+    (alonso--pin-window-to-end)
     (alonso--insert "\n\n\n"))
   (when alonso--thinking-separator-pending
     ;; The thinking finished and the answer started: separate it with two
@@ -331,8 +339,11 @@ Empty until the first `turn_end' reports a model."
   (when alonso-show-thinking
     (when alonso--after-tool-separator-pending
       ;; The tool output finished and the model started thinking: separate
-      ;; it with two blank lines, only on the first transition.
+      ;; it with two blank lines, only on the first transition.  Re-anchor
+      ;; at the end first (see `alonso--pin-window-to-end'): the
+      ;; confirmation left the window on the tool line.
       (setq alonso--after-tool-separator-pending nil)
+      (alonso--pin-window-to-end)
       (alonso--insert "\n\n\n"))
     (setq alonso--thinking-separator-pending t)
     (alonso--insert-propertized

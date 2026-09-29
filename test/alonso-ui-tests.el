@@ -718,6 +718,66 @@
    "the following streamed output is followed by the window"
    (= (window-point win) (with-current-buffer buf (point-max)))))
 
+;;; resuming after a tool call whose output scrolled the window follows again
+
+;; `alonso--keep-question-visible' (the tool confirmation) deliberately scrolls
+;; the conversation window to the tool line, which can sit far above the end
+;; when the tool output is taller than the window (e.g. a large diff).  The
+;; window is left with its point on that line, so `alonso--insert-propertized'
+;; stops following (its `at-bottom' test fails).  When the model resumes after
+;; the tool, the window must be re-anchored at the end so the stream is
+;; followed again.  The conversation window here is NOT selected (the cursor
+;; sits in the input buffer), the real-world layout.
+
+(let ((win (selected-window))
+      (buf (alonso--get-buffer))
+      (other (split-window (selected-window))))
+  (set-window-buffer win buf)
+  (set-window-buffer other (get-buffer-create "*alonso-tests-other*"))
+  (unwind-protect
+      (progn
+        (select-window other)
+        (with-current-buffer buf
+          (let ((inhibit-read-only t))
+            (erase-buffer)
+            (insert ">>> pergunta\n\n")))
+        (setq alonso--answer-start nil
+              alonso--thinking-separator-pending nil
+              alonso--after-tool-separator-pending nil
+              alonso-in-turn nil
+              alonso-pending-tools nil
+              alonso-show-thinking nil)
+        ;; a big tool output, taller than the window
+        (alonso--on-chunk
+         (concat (mapconcat (lambda (i) (format "diff linha %d" i))
+                            (number-sequence 1 80) "\n")
+                 "\n"))
+        ;; the confirmation scrolls the window back to the tool line, far from
+        ;; the end (mimics `alonso--keep-question-visible')
+        (let ((qpos (with-current-buffer buf (point-min))))
+          (set-window-point win qpos)
+          (alonso-tests--assert
+           "the confirmation leaves the window away from the end"
+           (and (not (eq win (selected-window)))
+                (/= (window-point win) (with-current-buffer buf (point-max)))))
+          ;; the model resumes after the tool (a chunk)
+          (setq alonso--after-tool-separator-pending t)
+          (alonso--on-chunk "retomando apos a tool\n")
+          (alonso-tests--assert
+           "resuming output after a tool call is followed (chunk)"
+           (= (window-point win) (with-current-buffer buf (point-max))))
+          ;; and again for a thinking fragment
+          (set-window-point win qpos)
+          (setq alonso--after-tool-separator-pending t
+                alonso-show-thinking t)
+          (alonso--on-thinking "pensando de novo\n")
+          (alonso--stop-spinner)
+          (alonso-tests--assert
+           "resuming thinking after a tool call is followed"
+           (= (window-point win) (with-current-buffer buf (point-max))))))
+    (when (window-live-p other) (delete-window other))
+    (select-window win)))
+
 (provide 'alonso-ui-tests)
 
 ;;; alonso-ui-tests.el ends here
