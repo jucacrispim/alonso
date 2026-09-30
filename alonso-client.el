@@ -182,6 +182,14 @@ or `chunk' that follows, and cleared at the start/end of every turn.")
   "Total prompt-cache miss tokens accumulated across all turns of the session.")
 (defvar alonso-session-model nil
   "Model used in the current session (nil until the first `turn_end').")
+(defvar alonso-session-context-pct nil
+  "Context usage fraction (0..1) of the last turn, or nil when unknown.
+Reported per turn (not accumulated); nil when the model's context window
+is not known by the bridge.")
+(defvar alonso-session-context-tokens nil
+  "Context size (tokens) sent in the last turn, or nil when unknown.")
+(defvar alonso-session-context-window nil
+  "Static context window (tokens) of the model, or nil when unknown.")
 
 (defvar alonso--current-turn-input-tokens 0
   "Input tokens accumulated in the current turn.")
@@ -220,6 +228,9 @@ Called when the bridge is restarted or shut down, ending the session."
         alonso-session-cache-hit-tokens 0
         alonso-session-cache-miss-tokens 0
         alonso-session-model nil
+        alonso-session-context-pct nil
+        alonso-session-context-tokens nil
+        alonso-session-context-window nil
         alonso--current-turn-input-tokens 0
         alonso--current-turn-output-tokens 0
         alonso--turn-finalized nil

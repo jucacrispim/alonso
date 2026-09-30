@@ -75,6 +75,22 @@
     (puthash "cache_miss_tokens" 0 ev)
     (alonso--on-turn-end ev)))
 
+(defun alonso-ui-tests--feed-context-turn (pct used window)
+  "Feed a `turn_end' (gemini) carrying context usage PCT of USED/WINDOW."
+  (alonso--reset-session)
+  (let ((ev (make-hash-table :test 'equal)))
+    (puthash "event" "turn_end" ev)
+    (puthash "stop_reason" "END_TURN" ev)
+    (puthash "model" "gemini" ev)
+    (puthash "input_tokens" 5 ev)
+    (puthash "output_tokens" 3 ev)
+    (puthash "cache_hit_tokens" 0 ev)
+    (puthash "cache_miss_tokens" 0 ev)
+    (puthash "context_pct" pct ev)
+    (puthash "context_tokens" used ev)
+    (puthash "context_window" window ev)
+    (alonso--on-turn-end ev)))
+
 (defun alonso-ui-tests--setup-input-mode-line-fresh ()
   "Kill the input buffer (if any) and run the mode-line setup for the first open."
   (let ((input (get-buffer "alonso-chat")))
@@ -231,6 +247,99 @@ right — the `alonso-open' layout — and makes the pair atomic."
         (should (and (string-match-p "↑5 ↓3" (alonso--mode-line-session))
                      (not (string-match-p "⚡" (alonso--mode-line-session))))))
     (alonso--reset-session)))
+
+;;; Context usage — dial glyph, percentage and window
+
+(ert-deftest alonso-ui--context-dial-char-fills-with-pct ()
+  :tags '(ui)
+  (should (and (equal ?○ (alonso--context-dial-char 0))
+               (equal ?◔ (alonso--context-dial-char 0.2))
+               (equal ?◑ (alonso--context-dial-char 0.4))
+               (equal ?◕ (alonso--context-dial-char 0.6))
+               (equal ?● (alonso--context-dial-char 0.8))
+               (equal ?● (alonso--context-dial-char 1.0)))))
+
+(ert-deftest alonso-ui--format-context-shows-dial-percent-and-window ()
+  :tags '(ui)
+  (unwind-protect
+      (progn
+        (setq alonso-session-context-pct 0.42
+              alonso-session-context-tokens 420000
+              alonso-session-context-window 1000000)
+        (should (equal "◑ 42% (420k/1M)" (alonso--format-context))))
+    (setq alonso-session-context-pct nil
+          alonso-session-context-tokens nil
+          alonso-session-context-window nil)))
+
+(ert-deftest alonso-ui--format-context-shows-zero-at-session-start ()
+  :tags '(ui)
+  (let ((alonso-session-context-pct nil)
+        (alonso-session-context-tokens nil)
+        (alonso-session-context-window nil))
+    (should (equal "○ 0% (0/?)" (alonso--format-context)))))
+
+(ert-deftest alonso-ui--format-context-shows-unknown-window ()
+  :tags '(ui)
+  (let ((alonso-session-context-pct nil)
+        (alonso-session-context-tokens 420000)
+        (alonso-session-context-window 0))
+    (should (equal "○ 0% (420k/?)" (alonso--format-context)))))
+
+(ert-deftest alonso-ui--mode-line-session-shows-context ()
+  :tags '(ui)
+  (unwind-protect
+      (progn
+        (alonso-ui-tests--feed-context-turn 0.42 420000 1000000)
+        (should (string-match-p (regexp-quote "◑ 42%% (420k/1M)")
+                                (alonso--mode-line-session))))
+    (alonso--reset-session)))
+
+(ert-deftest alonso-ui--mode-line-shows-zero-context-without-it ()
+  :tags '(ui)
+  (unwind-protect
+      (progn
+        (alonso-ui-tests--accumulate-turns)
+        (should (string-match-p (regexp-quote "] ○ 0%% (0/?)")
+                                (alonso--mode-line-session))))
+    (alonso--reset-session)))
+
+(ert-deftest alonso-ui--turn-summary-shows-context ()
+  :tags '(ui)
+  (unwind-protect
+      (progn
+        (alonso-ui-tests--feed-context-turn 0.42 420000 1000000)
+        (should (string-match-p (regexp-quote "ctx ◑ 42% (420k/1M)")
+                                (with-current-buffer (alonso--get-buffer)
+                                  (buffer-substring-no-properties (point-min) (point-max))))))
+    (alonso--reset-session)))
+
+(ert-deftest alonso-ui--turn-end-nil-context-shows-zero ()
+  :tags '(ui)
+  (unwind-protect
+      (progn
+        (alonso--reset-session)
+        (let ((ev (make-hash-table :test 'equal)))
+          (puthash "event" "turn_end" ev)
+          (puthash "stop_reason" "END_TURN" ev)
+          (puthash "model" "unknown" ev)
+          (puthash "input_tokens" 1 ev)
+          (puthash "output_tokens" 1 ev)
+          (puthash "context_pct" nil ev)
+          (puthash "context_window" 0 ev)
+          (alonso--on-turn-end ev))
+        (should (and (null alonso-session-context-pct)
+                     (equal "○ 0% (0/?)" (alonso--format-context)))))
+    (alonso--reset-session)))
+
+(ert-deftest alonso-ui--reset-clears-context ()
+  :tags '(ui)
+  (setq alonso-session-context-pct 0.5
+        alonso-session-context-tokens 100
+        alonso-session-context-window 200)
+  (alonso--reset-session)
+  (should (and (null alonso-session-context-pct)
+               (null alonso-session-context-tokens)
+               (null alonso-session-context-window))))
 
 ;;; Usage delta — incremental updates during turn and final turn_end
 
@@ -604,7 +713,7 @@ Return (RETURN-VALUE METHOD CWD)."
   (let ((alonso-in-turn t)
         (alonso--spinner-active nil)
         (alonso--spinner-timer nil))
-    (should (equal " [alonso…]" (alonso--mode-line-status)))))
+    (should (equal " alonso…" (alonso--mode-line-status)))))
 
 (ert-deftest alonso-ui--mode-line-status-shows-braille-spinner ()
   :tags '(ui)
@@ -614,7 +723,7 @@ Return (RETURN-VALUE METHOD CWD)."
     (unwind-protect
         (progn
           (alonso--start-spinner)
-          (should (string-match-p " \\[[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\\]" (alonso--mode-line-status))))
+          (should (string-match-p " [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]" (alonso--mode-line-status))))
       (alonso-ui-tests--spinner-cleanup))))
 
 (ert-deftest alonso-ui--spinner-stays-active-after-a-chunk ()
@@ -628,7 +737,7 @@ Return (RETURN-VALUE METHOD CWD)."
           (alonso--start-spinner)
           (should (and alonso--spinner-active
                        (timerp alonso--spinner-timer)
-                       (string-match-p " \\[[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\\]"
+                       (string-match-p " [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]"
                                        (alonso--mode-line-status)))))
       (alonso-ui-tests--spinner-cleanup))))
 

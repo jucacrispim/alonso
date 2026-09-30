@@ -298,13 +298,13 @@ chunks do not restart the spinner from the beginning."
 (defun alonso--mode-line-status ()
   "Return the mode-line status fragment for the conversation buffer.
 Shows the braille spinner while a turn is in flight (from prompt to
-turn_end/error/cancelled), or `[alonso…]' during a turn with no spinner."
+turn_end/error/cancelled), or `alonso…' during a turn with no spinner."
   (cond
    (alonso--spinner-active
-    (format " [%s]" (aref alonso--spinner-frames
-                          alonso--spinner-index)))
+    (format " %s" (aref alonso--spinner-frames
+                        alonso--spinner-index)))
    (alonso-in-turn
-    " [alonso…]")
+    " alonso…")
    (t "")))
 
 (defun alonso--mode-line-model ()
@@ -372,6 +372,33 @@ two decimals and no trailing zeros, e.g. 999, 1000 -> \"1k\", 1500 ->
    ((< n 999995) (concat (alonso--format-tokens--scaled n 1000.0) "k"))
    (t (concat (alonso--format-tokens--scaled n 1000000.0) "M"))))
 
+(defconst alonso--context-dial-chars [?○ ?◔ ?◑ ?◕ ?●]
+  "Circle glyphs from empty to full, used as the context-usage dial.")
+
+(defun alonso--context-dial-char (pct)
+  "Return the dial glyph for the context fraction PCT (0..1).
+The glyph fills up as PCT grows: ○ (empty) ◔ ◑ ◕ ● (full)."
+  (aref alonso--context-dial-chars
+        (min (1- (length alonso--context-dial-chars))
+             (floor (* pct (length alonso--context-dial-chars))))))
+
+(defun alonso--format-context ()
+  "Format the session context usage, e.g. \"◑ 42% (420k/1M)\".
+The dial fills as the context is consumed; the number is the percentage
+and the parenthesised pair is tokens used in the last turn over the model's
+static context window.  At the start of a session nothing was sent yet, so
+the usage reads as 0 (empty dial); when the model's window is unknown the
+denominator is shown as \"?\"."
+  (let ((pct (or alonso-session-context-pct 0)))
+    (format "%c %d%% (%s/%s)"
+            (alonso--context-dial-char pct)
+            (round (* 100 pct))
+            (alonso--format-tokens (or alonso-session-context-tokens 0))
+            (if (and alonso-session-context-window
+                     (> alonso-session-context-window 0))
+                (alonso--format-tokens alonso-session-context-window)
+              "?"))))
+
 (defun alonso--on-turn-end (ev)
   "Handle a `turn_end' event EV: finalize turn tokens, accumulate session
 usage and show a per-turn summary with the model."
@@ -385,6 +412,9 @@ usage and show a per-turn summary with the model."
         (output (gethash "output_tokens" ev 0))
         (cache-hit (gethash "cache_hit_tokens" ev 0))
         (cache-miss (gethash "cache_miss_tokens" ev 0))
+        (context-pct (gethash "context_pct" ev))
+        (context-tokens (gethash "context_tokens" ev))
+        (context-window (gethash "context_window" ev))
         (model (gethash "model" ev)))
     (let ((inc-in (- input alonso--current-turn-input-tokens))
           (inc-out (- output alonso--current-turn-output-tokens)))
@@ -400,17 +430,22 @@ usage and show a per-turn summary with the model."
             alonso--current-turn-output-tokens 0))
     (when model
       (setq alonso-session-model model))
-    (alonso--insert-propertized
-     (format "\n[stop_reason=%s model=%s | turn: sent %s, received %s, cache %s/%s | session: sent %s, received %s, cache %s/%s]\n"
-             (gethash "stop_reason" ev)
-             (or model "?")
-             (alonso--format-tokens input) (alonso--format-tokens output)
-             (alonso--format-tokens cache-hit) (alonso--format-tokens cache-miss)
-             (alonso--format-tokens alonso-session-input-tokens)
-             (alonso--format-tokens alonso-session-output-tokens)
-             (alonso--format-tokens alonso-session-cache-hit-tokens)
-             (alonso--format-tokens alonso-session-cache-miss-tokens))
-     'face 'alonso-separator-face))
+    (setq alonso-session-context-pct context-pct
+          alonso-session-context-tokens context-tokens
+          alonso-session-context-window context-window)
+    (let ((ctx (alonso--format-context)))
+      (alonso--insert-propertized
+       (format "\n[stop_reason=%s model=%s | turn: sent %s, received %s, cache %s/%s | session: sent %s, received %s, cache %s/%s%s]\n"
+               (gethash "stop_reason" ev)
+               (or model "?")
+               (alonso--format-tokens input) (alonso--format-tokens output)
+               (alonso--format-tokens cache-hit) (alonso--format-tokens cache-miss)
+               (alonso--format-tokens alonso-session-input-tokens)
+               (alonso--format-tokens alonso-session-output-tokens)
+               (alonso--format-tokens alonso-session-cache-hit-tokens)
+               (alonso--format-tokens alonso-session-cache-miss-tokens)
+               (if (string-empty-p ctx) "" (format " | ctx %s" ctx)))
+       'face 'alonso-separator-face)))
   (force-mode-line-update t)
   (alonso--show-answer-start))
 
@@ -775,21 +810,30 @@ from the clipboard when there is one (see `alonso-yank')."
 
 (defun alonso--mode-line-session ()
   "Return the mode-line fragment with the session token usage.
-Shows tokens sent (↑, input), tokens received (↓, output) and the prompt-cache
-hit/miss totals (⚡, shown only when the provider reports any), e.g.
-\" [↑12 ↓8 ⚡900/124]\"."
+Shows tokens sent (↑, input), tokens received (↓, output) and the
+prompt-cache hit/miss totals (⚡, shown only when the provider reports any)
+inside brackets; the context usage (a dial glyph that fills as the window is
+consumed, then the percentage and used/window tokens) follows outside them,
+e.g. \" [↑12 ↓8 ⚡900/124] ◑ 42% (420k/1M)\"."
   (let* ((hit alonso-session-cache-hit-tokens)
          (miss alonso-session-cache-miss-tokens)
          (cache (if (> (+ hit miss) 0)
-                    (format "⚡%s/%s " (alonso--format-tokens hit)
+                    (format " ⚡%s/%s" (alonso--format-tokens hit)
                             (alonso--format-tokens miss))
                   ""))
-         (s (format " [↑%s ↓%s %s]"
+         (ctx (alonso--format-context))
+         (ctx (if (string-empty-p ctx)
+                  ""
+                ;; `%' starts a mode-line construct, so double it to keep
+                ;; the literal percentage sign (and the space before the
+                ;; window) in the rendered mode line.
+                (concat " " (replace-regexp-in-string "%" "%%" ctx t t))))
+         (s (format " [↑%s ↓%s%s]%s"
                     (alonso--format-tokens alonso-session-input-tokens)
                     (alonso--format-tokens alonso-session-output-tokens)
-                    cache)))
+                    cache ctx)))
     (propertize s 'help-echo
-                "↑ tokens sent · ↓ tokens received · ⚡ prompt-cache hit/miss")))
+                "↑ tokens sent · ↓ tokens received · ⚡ prompt-cache hit/miss · context dial (used/window)")))
 
 (defun alonso--mode-line-request ()
   "Return the mode-line fragment with the thinking/effort overrides.
