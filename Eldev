@@ -1,0 +1,104 @@
+;;; Eldev --- Eldev configuration for alonso  -*- lexical-binding: t; -*-
+
+;; Project: alonso — Emacs client for llm-bridge.
+;;
+;; Runtime dependencies live in the `Package-Requires:' header of the package's
+;; main file (`alonso.el'); Eldev reads them from there and so does MELPA.  This
+;; file only adds what is *not* a runtime dependency.
+
+;; undercover (and its own deps) come from MELPA and are needed only to run the
+;; test suite / measure coverage — never by the package at runtime.  Declaring
+;; them as an extra dependency of the `test' set means `eldev test',
+;; `eldev coverage' and `eldev deps test' install them automatically (e.g. in
+;; CI), while `Package-Requires:' stays clean.
+(eldev-use-package-archive 'melpa)
+(eldev-add-extra-dependencies 'test 'undercover)
+;; The test files `require' the shared helpers by plain name
+;; (`alonso-tests-lib'), so `test/' must be in `load-path' when they are loaded
+;; or compiled (e.g. by `eldev compile' or `eldev test').
+(eldev-add-loading-roots 'test "test")
+
+;; The standalone runner must never be loaded, compiled or packaged by Eldev:
+;; its last top-level form runs the whole suite and calls
+;; `ert-run-tests-batch-and-exit'.  Adding it to the global excludes keeps it
+;; out of every fileset (including `compile').
+(setq eldev-standard-excludes
+      `(:or ,eldev-standard-excludes "./test/alonso-tests.el"))
+
+;; Do not load the standalone ERT runner (`test/alonso-tests.el') or the shared
+;; helpers (`test/alonso-tests-lib.el') as test files: the runner calls
+;; `ert-run-tests-batch-and-exit' and would terminate the whole Eldev process,
+;; and the helper is not a test file.  List the five real test files.
+(setq eldev-test-fileset
+      '("./test/alonso-client-tests.el"
+        "./test/alonso-ui-tests.el"
+        "./test/alonso-tools-tests.el"
+        "./test/alonso-markdown-tests.el"
+        "./test/alonso-image-tests.el"))
+
+(defun eldev-coverage--percent ()
+  "Return the overall line-coverage percentage from undercover's statistics."
+  (let ((covered 0) (relevant 0))
+    (maphash (lambda (_file file-coverage)
+               (maphash (lambda (_line hits)
+                          (cl-incf relevant)
+                          (when (> hits 0) (cl-incf covered)))
+                        file-coverage))
+             undercover--files-coverage-statistics)
+    (if (zerop relevant) 0.0 (/ (* 100.0 covered) relevant))))
+
+(eldev-defcommand eldev-coverage (&rest _)
+  "Run the test suite under `undercover' and report line coverage.
+
+Environment variables:
+
+  COVERAGE_FORMAT  undercover report format: text (default), lcov,
+                   coveralls, codecov or simplecov.
+  COVERAGE_FILE    where to write the report (default: coverage.txt).
+  COVERAGE_MIN     if set, fail the command when the overall coverage
+                   percentage is below this number."
+  :parameters     ""
+  :category       testing
+  ;; Command functions start with no dependencies loaded, so setting up
+  ;; `undercover' first and loading the project afterwards is what makes the
+  ;; project files get instrumented.
+  (eldev-load-extra-dependencies 'test)
+  (require 'undercover)
+  (require 'ert)
+  (let* ((format (if-let (f (getenv "COVERAGE_FORMAT")) (intern f) 'text))
+         (file   (expand-file-name (or (getenv "COVERAGE_FILE") "coverage.txt")
+                                   eldev-project-dir))
+         (min    (and (getenv "COVERAGE_MIN")
+                      (string-to-number (getenv "COVERAGE_MIN")))))
+    (setq undercover-force-coverage t)
+    (undercover "alonso*.el"
+                (:report-format format)
+                (:report-file file)
+                (:report-on-kill nil)
+                (:send-report nil)
+                (:exclude "test/*.el"))
+    ;; Load the project (and its runtime deps) *now*: the instrumentation
+    ;; handler registered above records what runs during the tests.
+    (eldev-load-project-dependencies)
+    (dolist (test-file (eldev-find-files eldev-test-fileset t))
+      (load test-file))
+    (let* ((stats (ert-run-tests-batch))
+           (unexpected (ert-stats-completed-unexpected stats))
+           (percent (progn (undercover-report) (eldev-coverage--percent))))
+      (unless (equal format 'coveralls)
+        (princ (format "\n[coverage] %.1f%% overall (%d missed lines in %d files)\n"
+                       percent
+                       (let ((n 0))
+                         (maphash (lambda (_f c)
+                                    (maphash (lambda (_l h) (unless (> h 0) (cl-incf n))) c))
+                                  undercover--files-coverage-statistics)
+                         n)
+                       (hash-table-count undercover--files-coverage-statistics))))
+      (when (and min (< percent min))
+        (signal 'eldev-error
+                (list "Coverage %.1f%% is below COVERAGE_MIN=%s%%" percent min)))
+      (when (> unexpected 0)
+        (signal 'eldev-error
+                (list "%d test(s) produced an unexpected result" unexpected))))))
+
+;;; Eldev ends here

@@ -150,3 +150,66 @@ commit por fase → reverter só a Fase 6 volta ao harness antigo.
 | 3–4 tools/client | 2 | médio |
 | 5 ui | 1 (1197 linhas) | **alto** |
 | 6 virada | 1 | baixo |
+
+## Desenvolvimento e CI (Eldev)
+
+O projeto usa **Eldev** para gerenciar dependências e rodar testes/cobertura.
+Instale o script `eldev` uma vez (o instalador oficial o coloca em
+`~/.local/bin/eldev`; aqui ele está em `~/local/bin/eldev`):
+
+    curl -fsSL https://raw.githubusercontent.com/emacs-eldev/eldev/master/webinstall/eldev | sh
+
+### Dependências
+
+- **Runtime**: ficam no header `Package-Requires:` de `alonso.el`
+  (`emacs`, `transient`). É esse header que o **Eldev lê** (e também o
+  **MELPA**, na hora de buildar o pacote) — não há outra fonte.
+- **Teste/cobertura**: `undercover` (com `dash` e `shut-up`) **não** é
+  dependência de runtime e por isso **não** entra no `Package-Requires:`.
+  Ele é declarado no `Eldev`:
+
+      (eldev-add-extra-dependencies 'test 'undercover)
+
+  Assim `eldev deps test`, `eldev test` e `eldev coverage` instalam tudo
+  sozinhos no cache do Eldev (`~/.cache/eldev`), sem poluir o pacote.
+
+### Comandos
+
+    eldev test                 # suíte ERT (282 testes)
+    eldev test-ert '(tag ui)'  # só os testes de UI
+    eldev coverage             # roda sob o undercover e imprime a cobertura
+    eldev deps                 # instala/atualiza as dependências
+
+Ou, via `Makefile`: `make test`, `make test-ui`, `make coverage`, `make deps`,
+`make clean`.
+
+> Obs.: o runner standalone `emacs -Q --batch -l test/alonso-tests.el`
+> **não** é usado pelo Eldev — ele chama `ert-run-tests-batch-and-exit` e
+> encerraria o processo do Eldev. Por isso `eldev-test-fileset` lista os cinco
+> arquivos de teste, sem o runner nem o `alonso-tests-lib.el`.
+
+### Cobertura
+
+O comando `coverage` (definido no `Eldev`) liga o `undercover`, instrumenta
+`alonso*.el` (excluindo `test/`), roda a suíte e emite o relatório. Variáveis:
+
+| Variável | Efeito |
+|---|---|
+| `COVERAGE_FORMAT` | `text` (default), `lcov`, `coveralls`, `codecov`, `simplecov` |
+| `COVERAGE_FILE` | onde gravar (default `coverage.txt`) |
+| `COVERAGE_MIN` | se setado, **falha** (exit 1) abaixo desse percentual |
+
+Exemplos:
+
+    make coverage                                   # texto
+    make coverage-lcov                              # coverage/lcov.info
+    COVERAGE_MIN=75 make coverage                   # gate de cobertura
+
+### CI
+
+Um pipeline mínimo:
+
+    eldev deps test    # instala runtime + test deps
+    eldev test         # 282 testes, código de saída 0/1
+    eldev coverage     # (opcional) relatório; use COVERAGE_MIN para o gate
+

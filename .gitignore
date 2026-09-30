@@ -19,5 +19,12 @@ ac-comphist.dat
 /*.tar
 /*.elc
 
+# Eldev local cache (project dir)
+/.eldev/
+
+# Coverage output
+/coverage.txt
+/coverage/
+
 # llm-bridge local context (não versionado)
 .llm-bridge/

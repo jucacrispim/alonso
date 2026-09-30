@@ -1,5 +1,13 @@
 ;;; alonso.el --- Emacs client for llm-bridge (entry point)  -*- lexical-binding: t; -*-
 
+;; Copyright (C) 2026 Juca Crispim
+
+;; Author: Juca Crispim <juca@poraodojuca.dev>
+;; Version: 0.1.0
+;; Package-Requires: ((emacs "27.1") (transient "0.4.0"))
+;; Keywords: tools, convenience
+;; URL: https://github.com/poraodojuca/alonso
+
 ;;; Commentary:
 
 ;; Emacs client for llm-bridge, a long-running Go process that bridges an
