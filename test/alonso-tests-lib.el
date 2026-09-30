@@ -14,6 +14,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'ert)
 
 (load-file (expand-file-name "../alonso.el"
                              (file-name-directory load-file-name)))
