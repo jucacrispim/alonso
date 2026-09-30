@@ -392,8 +392,7 @@ its mode is unavailable."
             (let ((p (point-min))
                   (max (point-max)))
               (while (< p max)
-                (let ((next (or (next-single-property-change p 'face nil max)
-                                max))
+                (let ((next (next-single-property-change p 'face nil max))
                       (fl (get-text-property p 'face)))
                   (when fl
                     (push (list (- p (point-min)) (- next (point-min)) fl)

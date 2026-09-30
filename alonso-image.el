@@ -191,8 +191,7 @@ comes before it and one pasted below comes after — this is what the echo in
   (let ((pt (point-min))
         (segments '()))
     (while (< pt (point-max))
-      (let* ((next (or (next-single-property-change pt 'alonso-image nil (point-max))
-                       (point-max)))
+      (let* ((next (next-single-property-change pt 'alonso-image nil (point-max)))
              (spec (get-text-property pt 'alonso-image)))
         (push (if spec
                   (cons 'image spec)

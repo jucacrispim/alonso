@@ -216,6 +216,103 @@
       (should (and (null (alonso-tests--md-display "**"))
                    (eq (alonso-tests--md-face "**") 'shadow))))))
 
+;;; Clickable links — opening, the at-point lookup and the mouse handler
+
+(ert-deftest alonso-markdown--open-link-opens-the-url-at-point ()
+  :tags '(markdown)
+  (let (opened)
+    (with-temp-buffer
+      (insert "docs")
+      (put-text-property (point-min) (point-max)
+                         'alonso-url "https://example.com")
+      (goto-char (point-min))
+      (cl-letf (((symbol-function 'browse-url)
+                 (lambda (url) (setq opened url))))
+        (alonso-open-link)))
+    (should (equal "https://example.com" opened))))
+
+(ert-deftest alonso-markdown--open-link-falls-back-to-char-before-point ()
+  :tags '(markdown)
+  (let (opened)
+    (with-temp-buffer
+      (insert "docs")
+      (put-text-property (point-min) (point-max)
+                         'alonso-url "https://example.com")
+      ;; Point sits right *after* the link, where the property is not present.
+      (goto-char (point-max))
+      (cl-letf (((symbol-function 'browse-url)
+                 (lambda (url) (setq opened url))))
+        (alonso-open-link)))
+    (should (equal "https://example.com" opened))))
+
+(ert-deftest alonso-markdown--open-link-errors-without-a-link ()
+  :tags '(markdown)
+  (with-temp-buffer
+    (insert "plain text")
+    (goto-char (point-min))
+    (should-error (alonso-open-link) :type 'user-error)))
+
+(ert-deftest alonso-markdown--open-link-mouse-sets-point-then-opens ()
+  :tags '(markdown)
+  (let (moved (opened 0))
+    (cl-letf (((symbol-function 'mouse-set-point)
+               (lambda (_event) (setq moved t)))
+              ((symbol-function 'alonso-open-link)
+               (lambda () (cl-incf opened))))
+      (alonso--open-link-mouse 'some-event))
+    (should (and moved (= 1 opened)))))
+
+;;; `alonso--md-line-end' — the line end extended over its newline
+
+(ert-deftest alonso-markdown--md-line-end-extends-over-the-newline ()
+  :tags '(markdown)
+  (with-temp-buffer
+    (insert "abc\ndef")
+    (goto-char (point-min))
+    (should (= 5 (alonso--md-line-end)))))
+
+(ert-deftest alonso-markdown--md-line-end-stops-at-end-of-buffer ()
+  :tags '(markdown)
+  (with-temp-buffer
+    (insert "abc")
+    (goto-char (point-min))
+    (should (= 4 (alonso--md-line-end)))))
+
+;;; Block quotes and the hiding-off rendering paths
+
+(ert-deftest alonso-markdown--block-quote-face ()
+  :tags '(markdown)
+  (alonso-tests--with-rendered "> quoted\n"
+    (should (eq (alonso-tests--md-face "quoted")
+                'alonso-md-quote-face))))
+
+(ert-deftest alonso-markdown--block-quote-marker-hidden ()
+  :tags '(markdown)
+  (alonso-tests--with-rendered "> quoted\n"
+    (should (equal "" (alonso-tests--md-display ">")))))
+
+(ert-deftest alonso-markdown--link-tail-dimmed-when-hiding-off ()
+  :tags '(markdown)
+  (let ((alonso-hide-markdown-markers nil))
+    (alonso-tests--with-rendered "see [docs](https://example.com/x)\n"
+      (should (and (null (alonso-tests--md-display "]("))
+                   (eq (alonso-tests--md-face "](") 'shadow))))))
+
+(ert-deftest alonso-markdown--fence-dimmed-when-hiding-off ()
+  :tags '(markdown)
+  (let ((alonso-hide-markdown-markers nil))
+    (alonso-tests--with-rendered "```elisp\n(setq x 1)\n```\n"
+      (should (eq (alonso-tests--md-face "```")
+                  'alonso-md-code-face)))))
+
+;; A code block left open at the end of the segment is still fontified.
+
+(ert-deftest alonso-markdown--unclosed-code-block-fontified ()
+  :tags '(markdown)
+  (alonso-tests--with-rendered "```elisp\n(setq x 1)\n"
+    (should (memq 'font-lock-keyword-face
+                  (alonso-tests--md-faces "setq")))))
+
 (provide 'alonso-markdown-tests)
 
 ;;; alonso-markdown-tests.el ends here

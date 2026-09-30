@@ -488,6 +488,72 @@
       (electric-indent-mode (if saved 1 0))
       (kill-buffer buf))))
 
+;;; Encoding, placeholders and file attachments
+
+(ert-deftest alonso-image--image-bytes-encodes-multibyte-as-unibyte ()
+  :tags '(image)
+  (let ((bytes (alonso--image-bytes "é")))
+    (should (and (stringp bytes)
+                 (not (multibyte-string-p bytes))))))
+
+(ert-deftest alonso-image--image-bytes-passes-unibyte-through ()
+  :tags '(image)
+  (let ((bytes (unibyte-string 1 2 3)))
+    (should (eq bytes (alonso--image-bytes bytes)))))
+
+;; A spec that cannot be displayed falls back to a textual placeholder; with
+;; neither `:path' nor `:url' the placeholder names the `:mime' type.
+
+(ert-deftest alonso-image--placeholder-falls-back-to-mime ()
+  :tags '(image)
+  (let ((s (alonso--image-string (list :mime "image/xyz"))))
+    (should (string-match-p "image/xyz" s))))
+
+(ert-deftest alonso-image--image-json-includes-the-detail-hint ()
+  :tags '(image)
+  (let ((h (alonso--image-json (list :data "AAAA" :mime "image/png"
+                                     :detail "high"))))
+    (should (equal "high" (gethash "detail" h)))))
+
+;; With several renderable image types on the clipboard, the comparator runs
+;; and the highest-priority one (png over jpeg) wins.
+
+(ert-deftest alonso-image--clipboard-image-picks-best-among-several ()
+  :tags '(image)
+  (let* ((targets (vector 'image/jpeg 'image/png))
+         (bytes (unibyte-string 1 2 3)))
+    (cl-letf (((symbol-function 'gui-get-selection)
+               (lambda (_sel type &optional _)
+                 (pcase type
+                   ('TARGETS targets)
+                   ((or 'image/jpeg 'image/png) bytes)
+                   (_ nil))))
+              ((symbol-function 'image-type-available-p)
+               (lambda (type) (memq type '(png jpeg)))))
+      (let ((chosen (alonso--clipboard-image)))
+        (should (and (equal "image/png" (car chosen))
+                     (equal bytes (cdr chosen))))))))
+
+(ert-deftest alonso-image--attach-image-file-errors-when-unreadable ()
+  :tags '(image)
+  (should-error (alonso-attach-image-file "/nonexistent/alonso/nope.png")
+                :type 'user-error))
+
+(ert-deftest alonso-image--attach-image-file-inserts-spec-in-input-buffer ()
+  :tags '(image)
+  (let ((file (make-temp-file "alonso-img" nil ".png"))
+        (input (get-buffer-create "alonso-chat")))
+    (unwind-protect
+        (progn
+          (with-current-buffer input (erase-buffer))
+          (alonso-attach-image-file file)
+          (with-current-buffer input
+            (should (equal (expand-file-name file)
+                           (plist-get (car (cdr (alonso--buffer-collect)))
+                                      :path)))))
+      (delete-file file)
+      (with-current-buffer input (erase-buffer)))))
+
 (provide 'alonso-image-tests)
 
 ;;; alonso-image-tests.el ends here

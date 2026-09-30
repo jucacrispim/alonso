@@ -785,6 +785,202 @@
                  (null alonso--trust-all)
                  (null alonso--trust-context)))))
 
+;;; `alonso--cancel-confirm' and `alonso--schedule-confirm' — timer handling
+
+;; A pending confirmation timer is cancelled and every pending batch state is
+;; cleared.
+
+(ert-deftest alonso-tools--cancel-confirm-cancels-the-timer ()
+  :tags '(tools)
+  (let* ((timer (run-with-timer 5 nil (lambda () nil)))
+         (alonso--confirm-timer timer)
+         (alonso--confirm-queue '((:id "a")))
+         (alonso--confirm-context (list :name "x"))
+         (alonso--trust-context (list :name "y"))
+         (alonso--menu-answered t))
+    (unwind-protect
+        (progn
+          (alonso--cancel-confirm)
+          (should (and (null alonso--confirm-timer)
+                       (null alonso--confirm-queue)
+                       (null alonso--confirm-context)
+                       (null alonso--trust-context)
+                       (null alonso--menu-answered))))
+      (when (timerp alonso--confirm-timer)
+        (cancel-timer alonso--confirm-timer)))))
+
+;; With no timer there is nothing to cancel; the batch state is still cleared.
+
+(ert-deftest alonso-tools--cancel-confirm-without-timer-clears-state ()
+  :tags '(tools)
+  (let ((alonso--confirm-timer nil)
+        (alonso--confirm-queue '((:id "a"))))
+    (alonso--cancel-confirm)
+    (should (and (null alonso--confirm-timer)
+                 (null alonso--confirm-queue)))))
+
+;; `--schedule-confirm' arms a fresh timer when none is pending ...
+
+(ert-deftest alonso-tools--schedule-confirm-creates-a-timer ()
+  :tags '(tools)
+  (let ((alonso--confirm-timer nil))
+    (unwind-protect
+        (progn
+          (alonso--schedule-confirm)
+          (should (timerp alonso--confirm-timer)))
+      (when (timerp alonso--confirm-timer)
+        (cancel-timer alonso--confirm-timer)))))
+
+;; ... and replaces a timer still pending from a previous tool_call.
+
+(ert-deftest alonso-tools--schedule-confirm-replaces-an-existing-timer ()
+  :tags '(tools)
+  (let* ((old (run-with-timer 5 nil (lambda () nil)))
+         (alonso--confirm-timer old))
+    (unwind-protect
+        (progn
+          (alonso--schedule-confirm)
+          (should (and (timerp alonso--confirm-timer)
+                       (not (eq old alonso--confirm-timer)))))
+      (when (timerp alonso--confirm-timer)
+        (cancel-timer alonso--confirm-timer)))))
+
+;;; `alonso--keep-question-visible' — scrolling a live conversation window
+
+;; With the conversation buffer displayed in a window, the function selects
+;; that window, moves to POS and recenters (leaving the original window
+;; selected again).
+
+(ert-deftest alonso-tools--keep-question-visible-scrolls-a-live-window ()
+  :tags '(tools)
+  (let ((buf (alonso-tools-tests--alonso-buffer)))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (goto-char (point-max))
+        (insert "anchor-line\n")))
+    (save-window-excursion
+      (let ((win (display-buffer buf)))
+        (should (window-live-p win))
+        (should (progn (alonso--keep-question-visible (point-min)) t))))))
+
+;;; `alonso--ask-user-trust' — the read-char-choice fallback
+
+;; y/Y run once, n/N deny and anything else (`!') opens the trust sub-menu.
+
+(ert-deftest alonso-tools--ask-user-trust-maps-characters ()
+  :tags '(tools)
+  (let (ch)
+    (cl-letf (((symbol-function 'read-char-choice)
+               (lambda (&rest _) ch)))
+      (setq ch ?y) (should (eq 'run (alonso--ask-user-trust "p")))
+      (setq ch ?Y) (should (eq 'run (alonso--ask-user-trust "p")))
+      (setq ch ?n) (should (eq 'deny (alonso--ask-user-trust "p")))
+      (setq ch ?N) (should (eq 'deny (alonso--ask-user-trust "p")))
+      (setq ch ?!) (should (eq 'trust (alonso--ask-user-trust "p"))))))
+
+;;; `alonso--trust-description' — the trust sub-menu labels
+
+(ert-deftest alonso-tools--trust-description-all-with-name ()
+  :tags '(tools)
+  (let ((alonso--trust-context (list :name "shell")))
+    (should (equal "This whole tool: shell"
+                   (alonso--trust-description 'all)))))
+
+(ert-deftest alonso-tools--trust-description-all-without-name ()
+  :tags '(tools)
+  (let ((alonso--trust-context nil))
+    (should (equal "This whole tool"
+                   (alonso--trust-description 'all)))))
+
+;; A `class' with a class key (here: the shell command token) shows the key.
+
+(ert-deftest alonso-tools--trust-description-class-with-key ()
+  :tags '(tools)
+  (let ((alonso--trust-context
+         (list :name "shell"
+               :input (alonso--json-plist-to-hash
+                       (list "command" "sed -i s/a/b/ f")))))
+    (should (equal "This class of calls: sed"
+                   (alonso--trust-description 'class)))))
+
+;; A tool without a class key (here: `read') falls back to the bare label.
+
+(ert-deftest alonso-tools--trust-description-class-without-key ()
+  :tags '(tools)
+  (let ((alonso--trust-context
+         (list :name "read"
+               :input (alonso--json-plist-to-hash (list "path" "/tmp/x")))))
+    (should (equal "This class of calls"
+                   (alonso--trust-description 'class)))))
+
+(ert-deftest alonso-tools--trust-description-class-without-input ()
+  :tags '(tools)
+  (let ((alonso--trust-context (list :name "shell")))
+    (should (equal "This class of calls"
+                   (alonso--trust-description 'class)))))
+
+(ert-deftest alonso-tools--trust-description-specific-with-detail ()
+  :tags '(tools)
+  (let ((alonso--trust-context
+         (list :name "shell"
+               :input (alonso--json-plist-to-hash (list "command" "echo hi")))))
+    (should (equal "This specific call: echo hi"
+                   (alonso--trust-description 'specific)))))
+
+(ert-deftest alonso-tools--trust-description-specific-without-detail ()
+  :tags '(tools)
+  (let ((alonso--trust-context nil))
+    (should (equal "This specific call"
+                   (alonso--trust-description 'specific)))))
+
+(ert-deftest alonso-tools--trust-description-unknown-kind-is-empty ()
+  :tags '(tools)
+  (let ((alonso--trust-context (list :name "shell")))
+    (should (equal "" (alonso--trust-description 'weird)))))
+
+;;; `alonso--trust-finish' — the `[allowed]' fallback when no trust is recorded
+
+;; A `class' scope on a tool without a class key records no trust, so the tool
+;; is marked `[allowed]' (not `[trusted]'), dispatched and the batch continues.
+
+(ert-deftest alonso-tools--trust-finish-allowed-when-not-actually-trusted ()
+  :tags '(tools)
+  (let ((recorded '()))
+    (setq alonso--trust-context
+          (list :name "read" :id "1"
+                :input (alonso--json-plist-to-hash (list "path" "/tmp/x"))
+                :rest '() :denied nil)
+          alonso--trust-specific nil
+          alonso--trust-class nil
+          alonso--trust-all nil)
+    (cl-letf (((symbol-function 'alonso--dispatch-tool) (lambda (&rest _) nil))
+              ((symbol-function 'alonso--record-tool-confirmation)
+               (lambda (name _input allowed &optional trust)
+                 (push (list name allowed trust) recorded))))
+      (alonso--trust-finish 'class))
+    (should (equal '(("read" t nil)) recorded))))
+
+;;; `alonso--confirm-next' — an already-trusted tool runs without asking
+
+(ert-deftest alonso-tools--confirm-next-runs-trusted-tool-without-asking ()
+  :tags '(tools)
+  (let ((asked nil) (dispatched nil))
+    (cl-letf (((symbol-function 'alonso--send) (lambda (&rest _) nil))
+              ((symbol-function 'alonso--confirm-ask)
+               (lambda (&rest _) (setq asked t)))
+              ((symbol-function 'alonso--show-tool-call) (lambda (&rest _) nil))
+              ((symbol-function 'alonso--record-tool-confirmation)
+               (lambda (&rest _) nil))
+              ((symbol-function 'alonso--dispatch-tool)
+               (lambda (name _input _id) (setq dispatched name)))
+              (alonso--trust-all t))
+      (alonso--confirm-next
+       (list (list :id "a" :name "write"
+                   :input (alonso--json-plist-to-hash
+                           (list "path" "/tmp/a" "content" "x"))))
+       nil))
+    (should (and (null asked) (equal "write" dispatched)))))
+
 (provide 'alonso-tools-tests)
 
 ;;; alonso-tools-tests.el ends here

@@ -1446,6 +1446,327 @@ Call FN with LEFT; clean up afterwards."
                        (= 3 (length (window-list)))))))
     (alonso-tests--reset-windows)))
 
+;;; Spinner tick and the files-changed event
+
+(ert-deftest alonso-ui--spinner-tick-advances-and-wraps-around ()
+  :tags '(ui)
+  (let ((alonso--spinner-index 0))
+    (alonso--spinner-tick)
+    (should (= 1 alonso--spinner-index))
+    (setq alonso--spinner-index (1- (length alonso--spinner-frames)))
+    (alonso--spinner-tick)
+    (should (= 0 alonso--spinner-index))))
+
+(ert-deftest alonso-ui--on-files-changed-runs-hook-with-the-file-list ()
+  :tags '(ui)
+  (let* ((seen nil)
+         (alonso-files-changed-hook
+          (list (lambda (files) (setq seen files))))
+         (ev (make-hash-table :test 'equal)))
+    (puthash "files" '("a.el" "b.el") ev)
+    (alonso--on-files-changed ev)
+    (should (equal '("a.el" "b.el") seen))))
+
+(ert-deftest alonso-ui--on-files-changed-does-nothing-without-files ()
+  :tags '(ui)
+  (let* ((called nil)
+         (alonso-files-changed-hook
+          (list (lambda (_files) (setq called t)))))
+    (alonso--on-files-changed (make-hash-table :test 'equal))
+    (should (null called))))
+
+;;; Insertion helper `alonso--insert-propertized-at'
+
+(ert-deftest alonso-ui--insert-propertized-at-inserts-at-pos-with-props ()
+  :tags '(ui)
+  (with-current-buffer (alonso--get-buffer)
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (insert "HEAD")
+      (let ((pos (alonso--insert-propertized-at (point-min) "XX" 'face 'bold)))
+        (should (and (equal "XXHEAD"
+                            (buffer-substring-no-properties (point-min) (point-max)))
+                     (eq 'bold (get-text-property (point-min) 'face))
+                     (= (point-min) pos)))))))
+
+;;; `--prompt-send' rejects a second prompt while a turn is in progress
+
+(ert-deftest alonso-ui--prompt-send-rejects-while-turn-in-progress ()
+  :tags '(ui)
+  (let ((alonso-in-turn t) (alonso-pending-tools nil))
+    (cl-letf (((symbol-function 'alonso--ensure-ready) (lambda ())))
+      (should-error (alonso--prompt-send "hi") :type 'error))))
+
+;;; `--prompt-echo-body' fallback when the segments hold no visible chunk
+
+(ert-deftest alonso-ui--prompt-echo-body-falls-back-on-empty-segments ()
+  :tags '(ui)
+  (let ((body (alonso--prompt-echo-body
+               "   " (list (list :url "https://example.com/a.png"))
+               (list (cons 'text "   ")))))
+    (should (string-prefix-p "(imagem)" body))))
+
+(ert-deftest alonso-ui--prompt-echo-body-fallback-without-images ()
+  :tags '(ui)
+  ;; Same fallback path, but with no images: the fallback list is built from
+  ;; the trimmed text (the `else' branch of the inner `if').
+  (let ((body (alonso--prompt-echo-body
+               "  " nil (list (cons 'text "  ")))))
+    (should (equal "" body))))
+
+;;; `--apply-project-dir-locals' loads an existing .dir-locals.el
+
+(ert-deftest alonso-ui--apply-project-dir-locals-loads-dir-locals ()
+  :tags '(ui)
+  (let ((tmp (expand-file-name (make-temp-file "alonso-dirlocals" t)))
+        (saved default-directory))
+    (unwind-protect
+        (progn
+          (with-temp-file (expand-file-name ".dir-locals.el" tmp)
+            (insert "((nil . ((indent-tabs-mode . nil))))"))
+          (let ((enable-local-variables nil)
+                (buf (generate-new-buffer " *alonso-dl*")))
+            (unwind-protect
+                (with-current-buffer buf
+                  (alonso--apply-project-dir-locals tmp)
+                  (should (equal (file-name-as-directory tmp) default-directory)))
+              (kill-buffer buf))))
+      (ignore-errors (delete-directory tmp t))
+      (setq default-directory saved))))
+
+;;; `/project' points at a directory that does not exist -> error
+
+(ert-deftest alonso-ui--project-nonexistent-dir-errors ()
+  :tags '(ui)
+  (should-error (alonso-ui-tests--run-project "/project /nonexistent/alonso/xyz")
+                :type 'error))
+
+;;; Deeper follow-up popups in the displaced pair's column
+
+(ert-deftest alonso-ui--follow-up-claims-deeper-buffer ()
+  :tags '(ui)
+  (alonso-ui-tests--with-magit
+   (lambda (_left _magit _col)
+     (let ((followup (get-buffer-create "*alonso-tests-followup*")))
+       (display-buffer followup nil)
+       ;; Select the follow-up window explicitly: the selected window must
+       ;; carry the `alonso--pair-followup' parameter (not be the takeover
+       ;; window itself) for a deeper popup to be claimed.
+       (select-window (get-buffer-window followup t))
+       (should (alonso--pair-window-takeover-p
+                (buffer-name (get-buffer-create "*alonso-tests-deeper*")) nil))))))
+
+(ert-deftest alonso-ui--follow-up-deeper-splits-below-followup ()
+  :tags '(ui)
+  (alonso-ui-tests--with-magit
+   (lambda (_left _magit _col)
+     (let ((followup (get-buffer-create "*alonso-tests-followup*"))
+           (deeper (get-buffer-create "*alonso-tests-deeper*")))
+       (display-buffer followup nil)
+       (select-window (get-buffer-window followup t))
+       (display-buffer deeper nil)
+       (should (get-buffer-window deeper t))))))
+
+;;; `alonso-open' recreates a missing input window when the conversation shows
+
+(ert-deftest alonso-ui--open-recreates-missing-input-window ()
+  :tags '(ui)
+  (unwind-protect
+      (progn
+        (alonso-tests--reset-windows)
+        (switch-to-buffer (alonso--get-buffer))
+        (cl-letf (((symbol-function 'alonso--ensure-ready) (lambda ())))
+          (alonso-open))
+        (should (and (get-buffer-window (alonso--get-buffer) t)
+                     (get-buffer-window alonso-input-buffer-name t))))
+    (alonso-tests--reset-windows)))
+
+;;; User commands — prompt, cancel, cwd
+
+(ert-deftest alonso-ui--prompt-command-forwards-to-prompt-send ()
+  :tags '(ui)
+  (let (sent)
+    (cl-letf (((symbol-function 'alonso--prompt-send)
+               (lambda (text) (setq sent text))))
+      (alonso-prompt "oi"))
+    (should (equal "oi" sent))))
+
+(ert-deftest alonso-ui--cancel-kills-live-tool-procs ()
+  :tags '(ui)
+  (let* ((proc (make-pipe-process :name "alonso-cancel-proc" :noquery t))
+         (alonso--tool-procs (list proc))
+         (alonso-process nil))
+    (unwind-protect
+        (progn
+          (alonso-cancel)
+          (should (and (null alonso--tool-procs)
+                       (not (process-live-p proc)))))
+      (ignore-errors (delete-process proc)))))
+
+(ert-deftest alonso-ui--set-cwd-sends-expanded-dir ()
+  :tags '(ui)
+  (let (sent)
+    (cl-letf (((symbol-function 'alonso--send)
+               (lambda (method params) (setq sent (cons method params)))))
+      (alonso-set-cwd "~/tmp"))
+    (should (and (equal "set_cwd" (car sent))
+                 (equal (expand-file-name "~/tmp")
+                        (cadr (member "cwd" (cdr sent))))))))
+
+;;; Interactive override commands (body + interactive spec)
+
+(defun alonso-ui-tests--request-value (var)
+  "Return the buffer-local value of VAR in the input buffer."
+  (with-current-buffer (get-buffer-create alonso-input-buffer-name)
+    (symbol-value var)))
+
+(ert-deftest alonso-ui--set-provider-interactive-stores-override ()
+  :tags '(ui)
+  (unwind-protect
+      (progn
+        (cl-letf (((symbol-function 'completing-read) (lambda (&rest _) "google"))
+                  ((symbol-function 'message) (lambda (&rest _) nil)))
+          (call-interactively #'alonso-set-provider))
+        (should (equal "google" (alonso-ui-tests--request-value
+                                 'alonso-request-provider))))
+    (with-current-buffer (get-buffer-create alonso-input-buffer-name)
+      (setq alonso-request-provider ""))))
+
+(ert-deftest alonso-ui--set-model-stores-override ()
+  :tags '(ui)
+  ;; NOTE: the interactive spec is the string "sModel ...", expanded by
+  ;; `Fcall_interactively' which calls the `read-string' subr directly, so it
+  ;; cannot be intercepted with `cl-letf' in batch (it would block on stdin).
+  ;; The body is therefore covered by a direct call.
+  (unwind-protect
+      (progn
+        (alonso-set-model "m1")
+        (should (equal "m1" (alonso-ui-tests--request-value
+                             'alonso-request-model))))
+    (with-current-buffer (get-buffer-create alonso-input-buffer-name)
+      (setq alonso-request-model ""))))
+
+(ert-deftest alonso-ui--set-thinking-interactive-stores-override ()
+  :tags '(ui)
+  (unwind-protect
+      (progn
+        (cl-letf (((symbol-function 'completing-read) (lambda (&rest _) "on"))
+                  ((symbol-function 'message) (lambda (&rest _) nil)))
+          (call-interactively #'alonso-set-thinking))
+        (should (eq 'on (alonso-ui-tests--request-value
+                         'alonso-request-thinking))))
+    (with-current-buffer (get-buffer-create alonso-input-buffer-name)
+      (setq alonso-request-thinking 'unset))))
+
+(ert-deftest alonso-ui--set-reasoning-effort-interactive-stores-override ()
+  :tags '(ui)
+  (unwind-protect
+      (progn
+        (cl-letf (((symbol-function 'completing-read) (lambda (&rest _) "high"))
+                  ((symbol-function 'message) (lambda (&rest _) nil)))
+          (call-interactively #'alonso-set-reasoning-effort))
+        (should (equal "high" (alonso-ui-tests--request-value
+                               'alonso-request-reasoning-effort))))
+    (with-current-buffer (get-buffer-create alonso-input-buffer-name)
+      (setq alonso-request-reasoning-effort ""))))
+
+(ert-deftest alonso-ui--set-knowledge-bases-sends-command ()
+  :tags '(ui)
+  (let (sent)
+    (cl-letf (((symbol-function 'alonso--send)
+               (lambda (method params) (setq sent (cons method params)))))
+      (alonso-set-knowledge-bases (list (make-hash-table))))
+    (should (equal "set_knowledge_bases" (car sent)))))
+
+;;; `alonso-quit'
+
+(ert-deftest alonso-ui--quit-sends-quit-when-process-live ()
+  :tags '(ui)
+  (let ((alonso-process 'p) sent)
+    (cl-letf (((symbol-function 'process-live-p) (lambda (_p) t))
+              ((symbol-function 'alonso--send) (lambda (method &rest _) (setq sent method))))
+      (alonso-quit))
+    (should (equal "quit" sent))))
+
+(ert-deftest alonso-ui--quit-noop-without-live-process ()
+  :tags '(ui)
+  (let ((alonso-process nil) sent)
+    (cl-letf (((symbol-function 'alonso--send) (lambda (&rest _) (setq sent t))))
+      (alonso-quit))
+    (should (null sent))))
+
+;;; `alonso-kill'
+
+(ert-deftest alonso-ui--kill-clears-state ()
+  :tags '(ui)
+  (let ((alonso-process nil) (alonso-ready t) (alonso-in-turn t)
+        (alonso-pending-tools '((:id "x"))) (alonso-line-buffer "junk")
+        (alonso--after-tool-separator-pending t)
+        (alonso--answer-start nil) (alonso--turn-answer-start nil))
+    (cl-letf (((symbol-function 'alonso--cancel-confirm) (lambda ())))
+      (alonso-kill))
+    (should (and (null alonso-process) (null alonso-ready)
+                 (null alonso-in-turn) (null alonso-pending-tools)
+                 (equal "" alonso-line-buffer)
+                 (null alonso--after-tool-separator-pending)))))
+
+(ert-deftest alonso-ui--kill-detaches-answer-markers ()
+  :tags '(ui)
+  (let ((alonso--answer-start (copy-marker 1))
+        (alonso--turn-answer-start (copy-marker 1))
+        (alonso-process nil))
+    (cl-letf (((symbol-function 'alonso--cancel-confirm) (lambda ())))
+      (alonso-kill))
+    (should (and (null alonso--answer-start)
+                 (null alonso--turn-answer-start)))))
+
+(ert-deftest alonso-ui--kill-sends-quit-and-deletes-live-process ()
+  :tags '(ui)
+  (let ((alonso-process 'fake) sent (deleted nil))
+    (cl-letf (((symbol-function 'alonso--cancel-confirm) (lambda ()))
+              ((symbol-function 'process-live-p) (lambda (_p) t))
+              ((symbol-function 'alonso--send) (lambda (method &rest _) (setq sent method)))
+              ((symbol-function 'delete-process) (lambda (_p) (setq deleted t)))
+              ((symbol-function 'sleep-for) (lambda (_s) nil)))
+      (alonso-kill))
+    (should (and (equal "quit" sent) deleted))))
+
+(ert-deftest alonso-ui--kill-deletes-live-tool-procs ()
+  :tags '(ui)
+  (let ((proc (make-pipe-process :name "alonso-kill-proc2" :noquery t))
+        (alonso--tool-procs nil) (alonso-process nil) deleted)
+    (setq alonso--tool-procs (list proc))
+    (unwind-protect
+        (progn
+          (cl-letf (((symbol-function 'alonso--cancel-confirm) (lambda ()))
+                    ((symbol-function 'delete-process) (lambda (_p) (setq deleted t))))
+            (alonso-kill))
+          (should deleted))
+      (ignore-errors (delete-process proc)))))
+
+;;; `alonso-restart'
+
+(ert-deftest alonso-ui--restart-clears-buffers-and-reopens ()
+  :tags '(ui)
+  (unwind-protect
+      (progn
+        (alonso-tests--reset-windows)
+        (switch-to-buffer (get-buffer-create "*alonso-tests-neutral*"))
+        (let ((conv (alonso--get-buffer))
+              (in (get-buffer-create alonso-input-buffer-name)))
+          (with-current-buffer conv
+            (let ((inhibit-read-only t)) (insert "old conversation")))
+          (with-current-buffer in (insert "old input"))
+          (cl-letf (((symbol-function 'alonso--ensure-ready) (lambda ()))
+                    ((symbol-function 'alonso--cancel-confirm) (lambda ()))
+                    ((symbol-function 'process-live-p) (lambda (_p) nil)))
+            (let ((alonso-process nil))
+              (alonso-restart)))
+          (should (and (with-current-buffer (get-buffer alonso-buffer-name)
+                         (string-empty-p (buffer-string)))
+                       (get-buffer-window alonso-input-buffer-name t)))))
+    (alonso-tests--reset-windows)))
+
 (provide 'alonso-ui-tests)
 
 ;;; alonso-ui-tests.el ends here
