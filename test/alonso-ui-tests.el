@@ -778,6 +778,420 @@
     (when (window-live-p other) (delete-window other))
     (select-window win)))
 
+;;; Atomic window — the conversation and the input behave as a single window
+
+;; `alonso--make-windows-atomic' groups the two windows so that the structural
+;; window commands act on the pair: `delete-window'/`quit-window' close both,
+;; `delete-other-windows' keeps both, and killing one of the two buffers closes
+;; the other's window too.  The two windows are made dedicated, which is what
+;; makes `quit-window' close the group instead of swapping in another buffer.
+
+(defun alonso-tests--pair-layout ()
+  "Display the conversation and input buffers as the alonso pair.
+Builds a left window plus the conversation (top) and input (bottom) on the
+right — the `alonso-open' layout — and makes the pair atomic."
+  (let ((left (get-buffer-create "*alonso-tests-left*")))
+    (delete-other-windows)
+    (switch-to-buffer left)
+    (split-window-right)
+    (other-window 1)
+    (switch-to-buffer (alonso--get-buffer))
+    (split-window-below)
+    (other-window 1)
+    (switch-to-buffer (get-buffer-create alonso-input-buffer-name))
+    (alonso--make-windows-atomic)
+    (get-buffer-window left)))
+
+(defun alonso-tests--reset-windows ()
+  "Return the frame to a single, undedicated, non-atomic window."
+  (setq alonso--pair-restore nil)
+  (dolist (win (window-list nil 'nomini))
+    (ignore-errors (set-window-dedicated-p win nil))
+    (set-window-parameter win 'alonso--pair-state nil)
+    (let ((parent (window-parent win)))
+      (while parent
+        (set-window-parameter parent 'window-atom nil)
+        (setq parent (window-parent parent)))))
+  (delete-other-windows))
+
+(alonso-tests--assert
+ "window-atom is registered as a persistent window parameter"
+ (eq 'writable (cdr (assq 'window-atom window-persistent-parameters))))
+
+;; `alonso-open' (with the bridge startup stubbed) lays out the pair and binds
+;; it as one atomic window.
+(unwind-protect
+    (progn
+      (alonso-tests--reset-windows)
+      ;; Start from a window NOT showing the conversation, so the first
+      ;; `alonso-open' builds the whole layout (`split-window-right' plus the
+      ;; conversation/input split) instead of just adding the input below.
+      (switch-to-buffer (get-buffer-create "*alonso-tests-left*"))
+      (cl-letf (((symbol-function 'alonso--ensure-ready) (lambda ())))
+        (alonso-open))
+      (let ((conv (get-buffer-window (alonso--get-buffer) t))
+            (in (get-buffer-window alonso-input-buffer-name t)))
+        (alonso-tests--assert
+         "open: displays the conversation and the input"
+         (and conv in))
+        (alonso-tests--assert
+         "open: binds the pair as one atomic window"
+         (and conv in
+              (eq (window-parent conv) (window-parent in))
+              (window-parameter (window-parent conv) 'window-atom)))
+        (alonso-tests--assert
+         "open: both windows of the pair are dedicated"
+         (and (window-dedicated-p conv) (window-dedicated-p in)))
+        (alonso-tests--assert
+         "open: the conversation and input split the right-hand side"
+         (and (= 3 (length (window-list)))
+              (eq (window-parent conv) (window-parent in))))
+        ;; idempotency: reopening does not add windows nor nest atoms
+        (cl-letf (((symbol-function 'alonso--ensure-ready) (lambda ())))
+          (alonso-open))
+        (alonso-tests--assert
+         "open: reopening keeps a single three-window layout"
+         (= 3 (length (window-list))))))
+  (alonso-tests--reset-windows))
+
+;; `alonso--make-windows-atomic' is a no-op when the input is not displayed
+;; beside the conversation (nothing to group).
+(unwind-protect
+    (progn
+      (alonso-tests--reset-windows)
+      (switch-to-buffer (alonso--get-buffer))
+      (alonso--make-windows-atomic)
+      (alonso-tests--assert
+       "atomic: no-op when the input buffer is not displayed"
+       (and (null (window-parameter (selected-window) 'window-atom))
+            (not (window-dedicated-p (selected-window))))))
+  (alonso-tests--reset-windows))
+
+;; Deleting one window of the pair deletes the other one too.
+(unwind-protect
+    (progn
+      (alonso-tests--pair-layout)
+      (delete-window (get-buffer-window alonso-input-buffer-name t))
+      (alonso-tests--assert
+       "atomic: deleting the input window closes the conversation too"
+       (and (null (get-buffer-window (alonso--get-buffer) t))
+            (null (get-buffer-window alonso-input-buffer-name t))
+            (= 1 (length (window-list))))))
+  (alonso-tests--reset-windows))
+
+;; Quitting (hiding) one window of the pair hides the other one too.  This
+;; only holds because the two windows are dedicated: a non-dedicated window
+;; would be reused to display another buffer instead of being closed.
+(unwind-protect
+    (progn
+      (alonso-tests--pair-layout)
+      (quit-window nil (get-buffer-window alonso-input-buffer-name t))
+      (alonso-tests--assert
+       "atomic: quitting the input window hides the conversation too"
+       (and (null (get-buffer-window (alonso--get-buffer) t))
+            (null (get-buffer-window alonso-input-buffer-name t))
+            (= 1 (length (window-list))))))
+  (alonso-tests--reset-windows))
+
+;; `delete-other-windows' keeps both windows of the pair (they are one unit).
+(unwind-protect
+    (progn
+      (alonso-tests--pair-layout)
+      (delete-other-windows (get-buffer-window (alonso--get-buffer) t))
+      (alonso-tests--assert
+       "atomic: delete-other-windows keeps both windows of the pair"
+       (and (get-buffer-window (alonso--get-buffer) t)
+            (get-buffer-window alonso-input-buffer-name t)
+            (= 2 (length (window-list))))))
+  (alonso-tests--reset-windows))
+
+;; Killing one buffer of the pair closes the other's window too (and does not
+;; kill the surviving buffer, which is reused on the next `alonso-open').
+(unwind-protect
+    (progn
+      (alonso-tests--pair-layout)
+      (kill-buffer (get-buffer alonso-buffer-name))
+      (alonso-tests--assert
+       "atomic: killing the conversation closes the input window too"
+       (and (null (get-buffer-window alonso-input-buffer-name t))
+            (= 1 (length (window-list)))))
+      (alonso-tests--assert
+       "atomic: killing one buffer keeps the other buffer alive"
+       (buffer-live-p (get-buffer alonso-input-buffer-name))))
+  (alonso-tests--reset-windows))
+
+;; The kill hook is installed buffer-locally on both buffers.
+(alonso-tests--assert
+ "kill hook installed on the conversation buffer"
+ (with-current-buffer (alonso--get-buffer)
+   (memq 'alonso--on-pair-buffer-killed kill-buffer-hook)))
+(alonso--setup-input-mode-line)
+(alonso-tests--assert
+ "kill hook installed on the input buffer"
+ (with-current-buffer (get-buffer alonso-input-buffer-name)
+   (memq 'alonso--on-pair-buffer-killed kill-buffer-hook)))
+
+;;; Other buffers taking over the pair's column (display-buffer integration)
+
+;; `alonso--pair-window-takeover-p' (the CONDITION of the `display-buffer-alist'
+;; entry) claims a buffer only when the pair is on screen, the buffer states no
+;; display policy, and the user is working outside the pair.
+(unwind-protect
+    (progn
+      (alonso-tests--reset-windows)
+      (let ((popup (get-buffer-create "*alonso-tests-popup*")))
+        (alonso-tests--assert
+         "takeover: nil when the pair is not displayed"
+         (null (alonso--pair-window-takeover-p (buffer-name popup) nil)))
+        (select-window (alonso-tests--pair-layout))
+        (alonso-tests--assert
+         "takeover: claims a policy-less buffer while working outside the pair"
+         (alonso--pair-window-takeover-p (buffer-name popup) nil))
+        (alonso-tests--assert
+         "takeover: claims a buffer that only asks for another window"
+         (alonso--pair-window-takeover-p
+          (buffer-name popup) '(nil (inhibit-same-window . t))))
+        (alonso-tests--assert
+         "takeover: defers to an explicit display policy"
+         (null (alonso--pair-window-takeover-p
+                (buffer-name popup) '(display-buffer-same-window))))
+        (alonso-tests--assert
+         "takeover: ignores the conversation and input buffers themselves"
+         (and (null (alonso--pair-window-takeover-p alonso-buffer-name nil))
+              (null (alonso--pair-window-takeover-p
+                     alonso-input-buffer-name nil))))
+        (let ((alonso-display-other-buffers-in-pair nil))
+          (alonso-tests--assert
+           "takeover: disabled by the defcustom"
+           (null (alonso--pair-window-takeover-p (buffer-name popup) nil))))
+        (select-window (get-buffer-window alonso-input-buffer-name t))
+        (alonso-tests--assert
+         "takeover: nil while the selected window is part of the pair"
+         (null (alonso--pair-window-takeover-p (buffer-name popup) nil)))
+        (select-window (alonso-tests--pair-layout))
+        (switch-to-buffer popup)
+        (alonso-tests--assert
+         "takeover: an already-visible buffer is not claimed"
+         (null (alonso--pair-window-takeover-p (buffer-name popup) nil)))))
+  (alonso-tests--reset-windows))
+
+;; A policy-less `display-buffer' from outside the pair takes over the column:
+;; the left window is left untouched and selected, and the pair's column shows
+;; the newcomer over its full height.  `alonso-open' brings the pair back.
+(unwind-protect
+    (progn
+      (alonso-tests--reset-windows)
+      (let ((popup (get-buffer-create "*alonso-tests-popup*")))
+        (select-window (alonso-tests--pair-layout))
+        (let ((left (selected-window)))
+          (display-buffer popup)
+          (let ((win (get-buffer-window popup t)))
+            (alonso-tests--assert
+             "display: a policy-less popup takes over the pair's column"
+             (and win
+                  (null (get-buffer-window (alonso--get-buffer) t))
+                  (null (get-buffer-window alonso-input-buffer-name t))
+                  (= 2 (length (window-list)))))
+            (alonso-tests--assert
+             "display: the popup fills the whole freed column"
+             (and win (eq (window-parent win) (window-parent left))))
+            (alonso-tests--assert
+             "display: the window used to work is left selected and unchanged"
+             (and (eq (selected-window) left)
+                  (eq (window-buffer left)
+                      (get-buffer "*alonso-tests-left*"))))
+            (alonso-tests--assert
+             "display: the conversation and input buffers stay alive"
+             (and (buffer-live-p (get-buffer alonso-buffer-name))
+                  (buffer-live-p (get-buffer alonso-input-buffer-name))))
+            (cl-letf (((symbol-function 'alonso--ensure-ready) (lambda ())))
+              (alonso-open))
+            (alonso-tests--assert
+             "display: `alonso-open' rebuilds the pair after a takeover"
+             (and (get-buffer-window (alonso--get-buffer) t)
+                  (get-buffer-window alonso-input-buffer-name t)))))))
+  (alonso-tests--reset-windows))
+
+;; Restoring the pair after a takeover: dismissing a popup that took the
+;; column must bring BOTH windows back — `quit-window' (q) alone only reuses
+;; the column's window for the conversation, and `delete-window' (C-x 0)
+;; removes it altogether.  The stashed frame state is put back in both cases.
+
+(alonso-tests--assert
+ "restore: no-op without a stashed state"
+ (progn (setq alonso--pair-restore nil) (alonso--pair-restore) t))
+
+;; `q' on the popup restores the conversation AND the input, atomically.
+(unwind-protect
+    (progn
+      (alonso-tests--reset-windows)
+      (let ((popup (get-buffer-create "*alonso-tests-popup*")))
+        (select-window (alonso-tests--pair-layout))
+        (let ((left (selected-window)))
+          (display-buffer popup)
+          (quit-window nil (get-buffer-window popup))
+          (alonso-tests--assert
+           "restore: `q' on the popup brings the conversation back"
+           (get-buffer-window (alonso--get-buffer) t))
+          (alonso-tests--assert
+           "restore: `q' on the popup brings the input back too"
+           (get-buffer-window alonso-input-buffer-name t))
+          (alonso-tests--assert
+           "restore: the pair is atomic and dedicated again"
+           (let ((conv (get-buffer-window (alonso--get-buffer) t))
+                 (in (get-buffer-window alonso-input-buffer-name t)))
+             (and conv in
+                  (eq (window-parent conv) (window-parent in))
+                  (window-parameter (window-parent conv) 'window-atom)
+                  (window-dedicated-p conv)
+                  (window-dedicated-p in))))
+          (alonso-tests--assert
+           "restore: the window used to work is left selected"
+           (eq (selected-window) left)))))
+  (alonso-tests--reset-windows))
+
+;; `C-x 0' on the popup restores the whole pair (the deleted window's column is
+;; rebuilt from the stashed frame state).
+(unwind-protect
+    (progn
+      (alonso-tests--reset-windows)
+      (let ((popup (get-buffer-create "*alonso-tests-popup*")))
+        (select-window (alonso-tests--pair-layout))
+        (display-buffer popup)
+        (delete-window (get-buffer-window popup))
+        (alonso-tests--assert
+         "restore: `C-x 0' on the popup brings the conversation and input back"
+         (and (get-buffer-window (alonso--get-buffer) t)
+              (get-buffer-window alonso-input-buffer-name t)
+              (= 3 (length (window-list)))))
+        (alonso-tests--assert
+         "restore: the pair is atomic again after `C-x 0'"
+         (let ((conv (get-buffer-window (alonso--get-buffer) t))
+               (in (get-buffer-window alonso-input-buffer-name t)))
+           (and conv in
+                (eq (window-parent conv) (window-parent in))
+                (window-parameter (window-parent conv) 'window-atom))))))
+  (alonso-tests--reset-windows))
+
+;; `alonso-open' clears a stale state instead of restoring over a live layout.
+(unwind-protect
+    (progn
+      (alonso-tests--reset-windows)
+      (alonso-tests--pair-layout)
+      (setq alonso--pair-restore
+            (list :frame (selected-frame)
+                  :state (window-state-get (frame-root-window))))
+      (alonso--pair-restore)
+      (alonso-tests--assert
+       "restore: a stale state is dropped while the pair is displayed"
+       (null alonso--pair-restore)))
+  (alonso-tests--reset-windows))
+
+;;; Magit-style follow-up buffers stay in the pair's column
+
+;; Once a buffer has taken over the pair's column (e.g. `magit-status'), a
+;; follow-up popup from inside it (a Magit diff, a process buffer) must be
+;; displayed in that same column, replacing what it shows, instead of falling
+;; through to a window on the other side of the frame.  The takeover is
+;; recognized by the `alonso--pair-state' parameter stashed on the column's
+;; window.
+
+(alonso-tests--assert
+ "follow-up: no takeover window while the pair is up"
+ (unwind-protect
+     (progn (alonso-tests--reset-windows)
+            (alonso-tests--pair-layout)
+            (null (alonso--pair-takeover-window)))
+   (alonso-tests--reset-windows)))
+
+;; A follow-up popup (action nil) while the takeover is selected splits the
+;; column below, keeping the buffer that displaced the pair on top; the left
+;; window is untouched and selected.
+(unwind-protect
+    (progn
+      (alonso-tests--reset-windows)
+      (let ((magit (get-buffer-create "*alonso-tests-magit*"))
+            (followup (get-buffer-create "*alonso-tests-followup*")))
+        (select-window (alonso-tests--pair-layout))
+        (let ((left (selected-window)))
+          (display-buffer magit)
+          (let ((col (get-buffer-window magit t)))
+            (select-window col)
+            (alonso-tests--assert
+             "follow-up: the takeover window is the one carrying the state"
+             (eq (alonso--pair-takeover-window) col))
+            (alonso-tests--assert
+             "follow-up: an action-nil buffer is claimed while in the takeover"
+             (alonso--pair-window-takeover-p (buffer-name followup) nil))
+            (display-buffer followup nil)
+            (alonso-tests--assert
+             "follow-up: the follow-up splits the column below the takeover"
+             (let ((fwin (get-buffer-window followup t)))
+               (and fwin
+                    (not (eq fwin col))
+                    (eq (window-parent fwin) (window-parent col))
+                    (window-parameter fwin 'alonso--pair-followup)
+                    (> (nth 1 (window-edges fwin))
+                       (nth 1 (window-edges col)))
+                    (eq (window-buffer col) magit))))
+            (alonso-tests--assert
+             "follow-up: the left window is untouched"
+             (and (not (eq (selected-window) left))
+                  (window-live-p left)
+                  (eq (window-buffer left)
+                      (get-buffer "*alonso-tests-left*"))))
+            (alonso-tests--assert
+             "follow-up: closing the follow-up does not restore the pair yet"
+             (progn (quit-window nil (get-buffer-window followup t))
+                    (null (get-buffer-window (alonso--get-buffer) t))))))))
+  (alonso-tests--reset-windows))
+
+;; The pair is rebuilt only once the takeover window is gone (`C-x 0') or shows
+;; the conversation again (`q' on the outer popup).
+(unwind-protect
+    (progn
+      (alonso-tests--reset-windows)
+      (let ((magit (get-buffer-create "*alonso-tests-magit*")))
+        (select-window (alonso-tests--pair-layout))
+        (let ((left (selected-window)))
+          (display-buffer magit)
+          (let ((col (get-buffer-window magit t)))
+            (select-window col)
+            (display-buffer (get-buffer-create "*alonso-tests-followup*") nil)
+            ;; back out to the takeover buffer, then dismiss it
+            (quit-window nil (get-buffer-window "*alonso-tests-followup*" t))
+            (quit-window nil (alonso--pair-takeover-window))
+            (alonso-tests--assert
+             "follow-up: `q' back through the takeover restores the whole pair"
+             (and (get-buffer-window (alonso--get-buffer) t)
+                  (get-buffer-window alonso-input-buffer-name t)))
+            (alonso-tests--assert
+             "follow-up: the pair is atomic again"
+             (let ((conv (get-buffer-window (alonso--get-buffer) t))
+                   (in (get-buffer-window alonso-input-buffer-name t)))
+               (and conv in
+                    (eq (window-parent conv) (window-parent in))
+                    (window-parameter (window-parent conv) 'window-atom))))
+            (alonso-tests--assert
+             "follow-up: the left window is left selected"
+             (eq (selected-window) left))))))
+  (alonso-tests--reset-windows))
+
+;; `C-x 0' on the takeover window (the pair is gone) rebuilds the pair.
+(unwind-protect
+    (progn
+      (alonso-tests--reset-windows)
+      (let ((magit (get-buffer-create "*alonso-tests-magit2*")))
+        (select-window (alonso-tests--pair-layout))
+        (display-buffer magit)
+        (delete-window (get-buffer-window magit t))
+        (alonso-tests--assert
+         "follow-up: `C-x 0' on the takeover window restores the pair"
+         (and (get-buffer-window (alonso--get-buffer) t)
+              (get-buffer-window alonso-input-buffer-name t)
+              (= 3 (length (window-list)))))))
+  (alonso-tests--reset-windows))
+
 (provide 'alonso-ui-tests)
 
 ;;; alonso-ui-tests.el ends here

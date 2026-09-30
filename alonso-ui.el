@@ -8,7 +8,8 @@
 ;; helpers every renderer builds on, the shared conversation state, the braille
 ;; spinner and mode-line fragments, the event render handlers (chunks,
 ;; thinking, turn summaries, errors, hooks), the `/project' command, the window
-;; layout (open/restart/kill) and the `C-c a' prefix map.
+;; layout (open/restart/kill, including the atomic group that makes the
+;; conversation and the input behave as a single window) and the `C-c a' prefix map.
 ;;
 ;; The three rendering/UX pieces live in sibling files that build on top of
 ;; this one:
@@ -41,6 +42,10 @@
 (declare-function alonso-attach-image-file "alonso-image" (file))
 (declare-function alonso-attach-image-url "alonso-image" (url))
 (declare-function alonso--cancel-confirm "alonso-tools" ())
+
+;; `window--display-buffer' (window.el, preloaded) is the low-level display
+;; primitive reused to hand the pair's column over to another buffer.
+(declare-function window--display-buffer "window" (buffer window type &optional alist))
 
 ;; Defcustoms owned by the sibling files but read/written here.
 (defvar alonso-render-markdown-live)
@@ -508,6 +513,9 @@ script's combined output is inserted as plain text."
         (setq buffer-read-only t))
       (unless alonso-mode
         (alonso-mode 1))
+      ;; Killing this buffer must also close the input window, so the pair
+      ;; never leaves a lone window behind (see `alonso--on-pair-buffer-killed').
+      (add-hook 'kill-buffer-hook #'alonso--on-pair-buffer-killed nil t)
       ;; The conversation bar shows only what matters: the buffer name, the
       ;; session model, the session token usage and, at the very end, the
       ;; status/spinner.  Drop the modes construct (it would only render
@@ -812,6 +820,10 @@ the conversation buffer's mode-line instead (see `alonso--get-buffer')."
   (let ((buf (or (get-buffer alonso-input-buffer-name)
                  (get-buffer-create alonso-input-buffer-name))))
     (with-current-buffer buf
+      ;; Killing this buffer must also close the conversation window, so the
+      ;; pair never leaves a lone window behind (see
+      ;; `alonso--on-pair-buffer-killed').
+      (add-hook 'kill-buffer-hook #'alonso--on-pair-buffer-killed nil t)
       ;; Drop the modes construct (\"(Fundamental LBIn)\") and the position
       ;; (line/column/%/\"All\") — the input bar should show only its name.
       (setq-local mode-line-modes "")
@@ -822,12 +834,286 @@ the conversation buffer's mode-line instead (see `alonso--get-buffer')."
                     (append mode-line-misc-info
                             (list '(:eval (alonso--mode-line-request)))))))))
 
+;;; The conversation and the input behave as a single window (atomic window)
+
+;; `window-make-atom' (Emacs 27+) groups the two windows into one atomic
+;; window, so the structural window commands act on the pair as a unit:
+;; `delete-window' and `quit-window' close both and `delete-other-windows'
+;; keeps both.  The dedicated flags are what make `quit-window' (and a plain
+;; `switch-to-buffer' in one of them) treat each window as a fixed part of
+;; the group instead of swapping its buffer for an unrelated one.
+;; `window-atom' is not a persistent parameter by default, so saving and
+;; restoring window states (desktop.el, `window-state-put') would lose the
+;; group; register it as writable so it survives.
+
+(add-to-list 'window-persistent-parameters '(window-atom . writable))
+
+(defun alonso--pair-window-parent ()
+  "Return the window holding the conversation and input windows, or nil.
+That is their common parent window when both buffers are displayed as
+siblings; nil when either buffer is not displayed or the two are not
+siblings (e.g. one of them was killed or moved to another window)."
+  (let ((conv (get-buffer-window alonso-buffer-name t))
+        (in (get-buffer-window alonso-input-buffer-name t)))
+    (when (and conv in
+               (window-parent conv)
+               (eq (window-parent conv) (window-parent in)))
+      (window-parent conv))))
+
+(defun alonso--make-windows-atomic ()
+  "Make the conversation and input windows behave as a single window.
+When both buffers are displayed as siblings, marks their parent as an atomic
+window and makes both windows dedicated, so `delete-window'/`quit-window' on
+either closes both, `delete-other-windows' keeps both and neither can be
+silently switched to an unrelated buffer.  Idempotent, and a no-op when the
+two buffers are not displayed as siblings.  Called by `alonso-open'."
+  (let ((parent (alonso--pair-window-parent)))
+    (when parent
+      (window-make-atom parent)
+      (set-window-dedicated-p (get-buffer-window alonso-buffer-name t) t)
+      (set-window-dedicated-p (get-buffer-window alonso-input-buffer-name t) t))))
+
+(defun alonso--close-pair-windows ()
+  "Close every window still showing the conversation or the input buffer.
+Used when one of the two buffers is killed, so a lone window of the pair is
+never left on screen (the atomic window only collapses by itself when it is
+not the only window of the frame).  When the pair is the frame's only window
+Emacs refuses to delete its atomic windows, so the atom parameter is cleared
+first — the group is being torn down anyway."
+  (when (alonso--pair-window-parent)
+    (let ((pair (list (get-buffer alonso-buffer-name)
+                      (get-buffer alonso-input-buffer-name))))
+      (dolist (win (window-list nil 'nomini))
+        (when (and (window-live-p win)
+                   (memq (window-buffer win) pair))
+          (let ((parent (window-parent win)))
+            (when (and parent (window-parameter parent 'window-atom))
+              (set-window-parameter parent 'window-atom nil)))
+          (ignore-errors (delete-window win)))))))
+
+(defun alonso--on-pair-buffer-killed ()
+  "Close the conversation/input window group when one of its buffers is killed.
+Installed buffer-locally in `kill-buffer-hook' on both buffers, so killing
+either one closes both windows instead of leaving the survivor alone."
+  (alonso--close-pair-windows))
+
+;;; Handing the pair's column over to other buffers
+
+;; The atomic group above is invisible to `display-buffer': it refuses to
+;; reuse the dedicated windows and it will not split an atomic window, so a
+;; buffer that asks to be shown "in another window" (a compilation buffer, a
+;; command such as `magit-status', ...) falls through to the fallback action
+;; and splits the window the user is working in instead of using the pair's
+;; column.  The `display-buffer-alist' entry below claims such buffers for the
+;; pair: the conversation window is reused over the full column height and the
+;; input window is deleted, so the newcomer takes the whole column.  Both
+;; buffers stay alive; the pair's layout is stashed and put back when the popup
+;; is dismissed (`q' or `C-x 0'), and `alonso-open' rebuilds the pair anyway.
+;;
+;; Only buffers that state no display policy of their own are claimed (the
+;; ACTION argument has no car): `display-buffer-same-window', `at-bottom',
+;; `pop-up-frame' and friends keep their usual meaning.  The entry is also
+;; skipped while the selected window is one of the two, so a popup never
+;; displaces the window being used to talk to the model.
+
+(defcustom alonso-display-other-buffers-in-pair t
+  "Whether buffers shown \"in another window\" may use the pair's column.
+When non-nil, a buffer that `display-buffer' would display in another window
+without stating a display policy of its own — a compilation buffer, a
+`magit-status' buffer and the like — is displayed in the column holding the
+conversation and the input, instead of splitting the window the user is
+working in.  The conversation and input buffers stay alive (their windows are
+simply reused); `alonso-open' brings the pair back.  The policy is skipped
+while the selected window is one of the two, so a popup never displaces the
+window used to talk to the model."
+  :type 'boolean
+  :group 'alonso)
+
+(defun alonso--pair-takeover-window ()
+  "Return the window currently holding a popup that took over the pair.
+That is the window on which `alonso--display-in-pair-window' stashed the
+pair's own layout (parameter `alonso--pair-state'), or nil when no takeover
+is in effect.  While such a window exists the pair itself is off screen, so
+`alonso--pair-window-parent' returns nil; this helper is how the takeover is
+recognized in that state."
+  (cl-find-if (lambda (win) (window-parameter win 'alonso--pair-state))
+              (window-list nil 'nomini)))
+
+(defun alonso--pair-window-takeover-p (buffer-name action)
+  "Return non-nil when `display-buffer' should show BUFFER-NAME in the pair.
+CONDITION helper for the `display-buffer-alist' entry registered below.  It
+matches when `alonso-display-other-buffers-in-pair' is non-nil, ACTION states
+no display policy of its own, neither the pair's own buffers nor an
+already-visible buffer is requested, and one of two situations holds:
+
+  - the conversation and the input are displayed as siblings and the selected
+    window is not one of the two (a popup from outside the pair); or
+  - a takeover is already in effect (`alonso--pair-takeover-window') and the
+    selected window is the takeover window or one of its follow-up windows (a
+    popup from inside the buffer that displaced the pair — e.g. a Magit diff
+    while in Magit)."
+  (and alonso-display-other-buffers-in-pair
+       (null (car-safe action))
+       (let ((buffer (get-buffer buffer-name)))
+         (and buffer
+              (not (get-buffer-window buffer t))
+              (not (memq buffer (list (get-buffer alonso-buffer-name)
+                                      (get-buffer alonso-input-buffer-name))))
+              (or (and (alonso--pair-window-parent)
+                       (not (memq (selected-window)
+                                  (list (get-buffer-window alonso-buffer-name t)
+                                        (get-buffer-window alonso-input-buffer-name t)))))
+                  (let ((tw (alonso--pair-takeover-window)))
+                    (and tw
+                         (or (eq (selected-window) tw)
+                             (window-parameter (selected-window)
+                                               'alonso--pair-followup)))))))))
+
+;; Preserving the pair across a takeover
+
+;; When a popup takes the pair's column away, the pair's own layout would be
+;; lost: `quit-window' (q) only brings the conversation back to the column's
+;; window, and `delete-window' (C-x 0) removes that window altogether.  Two
+;; window states are therefore stashed when the takeover happens and put back
+;; when the popup is dismissed: the pair's own state on the column's window
+;; (used when that window survives, i.e. `q') and the whole frame's state on
+;; `alonso--pair-restore' (used when the window is gone, i.e. `C-x 0').  The
+;; states are only applied while the pair is not displayed, so they never
+;; fight with `alonso-open' or a fresh takeover.
+
+(defvar alonso--pair-restore nil
+  "Plist (:frame F :state S) stashed when a popup takes over the pair's column.
+The state S is the window state of frame F as it was before the takeover;
+`alonso--pair-restore' puts it back once the popup is gone.  The pair's own
+layout is also stashed on the conversation window itself (parameter
+`alonso--pair-state'), for the case where that window survives.")
+
+(defun alonso--pair-forget (conv)
+  "Forget the stashed pair state (the frame state and CONV's window state)."
+  (setq alonso--pair-restore nil)
+  (when (and conv (window-live-p conv))
+    (set-window-parameter conv 'alonso--pair-state nil)))
+
+(defun alonso--pair-restore ()
+  "Bring back the conversation and input windows from the stashed state.
+No-op unless `alonso--display-in-pair-window' stashed a state and the pair is
+no longer displayed.  Reapplies the atomic group and the dedicated flags, then
+forgets the state.  Installed as :after advice on the window-closing commands
+so `q' and `C-x 0' on a popup that took the pair's column bring the pair back.
+
+Only the very end of the takeover triggers a restore: while the takeover
+window still shows a buffer other than the conversation (a Magit diff or
+process buffer, say), closing a window inside it must leave the takeover
+alone.  The pair is rebuilt once the takeover window is gone, or once it is
+back to showing the conversation."
+  (let ((tw (alonso--pair-takeover-window)))
+    (cond
+     ;; The pair is on screen again (e.g. `alonso-open' ran): drop the stale
+     ;; state instead of restoring over a live layout.
+     ((alonso--pair-window-parent)
+      (alonso--pair-forget tw))
+     ;; No takeover window: either nothing was ever stashed, or it was already
+     ;; dealt with.  If a frame state is still around, the takeover window was
+     ;; deleted (`C-x 0'); rebuild the whole frame from the stashed state.
+     ((null tw)
+      (when alonso--pair-restore
+        (let ((frame (plist-get alonso--pair-restore :frame))
+              (state (plist-get alonso--pair-restore :state)))
+          (alonso--pair-forget nil)
+          (when (frame-live-p frame)
+            (window-state-put state (frame-root-window frame) 'safe)
+            (alonso--make-windows-atomic)))))
+     ;; `q'/`quit-window' on the takeover: the window still lives and is back
+     ;; to showing the conversation; rebuild the pair there from the state
+     ;; stashed on it.  The rest of the frame is left alone, so the window the
+     ;; user was working in is preserved (identity included).
+     ((eq (window-buffer tw) (get-buffer alonso-buffer-name))
+      (let ((state (window-parameter tw 'alonso--pair-state)))
+        (alonso--pair-forget tw)
+        (window-state-put state tw 'safe)
+        (alonso--make-windows-atomic))))))
+
+(defun alonso--after-window-closed (&rest _)
+  "Restore the pair after a window of a popup that displaced it is closed.
+:after advice for `quit-restore-window' (which `q'/`quit-window' use) and
+`delete-window' (C-x 0), so both ways of dismissing the popup bring the pair
+back.  A no-op while no takeover stashed a state."
+  (alonso--pair-restore))
+
+(advice-add 'quit-restore-window :after #'alonso--after-window-closed)
+(advice-add 'delete-window :after #'alonso--after-window-closed)
+
+(defun alonso--display-in-pair-window (buffer alist)
+  "Display BUFFER in the pair's column, over its full height.
+Display action function for the `display-buffer-alist' entry registered
+below.  Two cases:
+
+  - the pair is on screen: the conversation window is reused to show BUFFER
+    over the full column height and the input window is deleted, so the
+    newcomer takes the place of the whole pair.  The pair's layout is stashed
+    (see `alonso--pair-restore') and the atomic group and the dedicated flags
+    are cleared first.
+  - a takeover is already in effect and the selected window is the takeover
+    window (or a follow-up window already split off it): BUFFER is shown in a
+    new window split below the selected one, so it stays in the pair's column
+    instead of falling through to a window on the other side.  The column is
+    therefore divided, not overwritten: the buffer that displaced the pair (a
+    Magit status buffer, now showing the commit message) stays visible on top,
+    the way Magit itself splits its window for a diff or a process buffer.  The
+    stashed states are left untouched, so the pair still comes back when the
+    takeover unwinds.
+
+Return the window used, or nil when neither case applies (in which case
+another action is free to display BUFFER)."
+  (let ((conv (get-buffer-window alonso-buffer-name t))
+        (in (get-buffer-window alonso-input-buffer-name t))
+        (parent (alonso--pair-window-parent))
+        (tw (alonso--pair-takeover-window)))
+    (cond
+     ((and conv in parent)
+      ;; Snapshot the frame layout before tearing the pair down, but only
+      ;; stash it once the popup is in place: stashing it earlier would let
+      ;; the `delete-window' advice below (which fires for the input window we
+      ;; are about to delete) restore the pair right away and undo the
+      ;; takeover.
+      (let ((pair-state (window-state-get parent))
+            (frame-state (window-state-get (frame-root-window (window-frame conv))))
+            (frame (window-frame conv)))
+        (set-window-parameter parent 'window-atom nil)
+        (set-window-dedicated-p conv nil)
+        (set-window-dedicated-p in nil)
+        (ignore-errors (delete-window in))
+        (prog1 (window--display-buffer buffer conv 'reuse alist)
+          (set-window-parameter conv 'alonso--pair-state pair-state)
+          (setq alonso--pair-restore (list :frame frame :state frame-state)))))
+     ;; Follow-up popup while the pair is displaced: split the column below the
+     ;; selected window and show BUFFER in the new window, so the buffer that
+     ;; displaced the pair stays on top (Magit shows its diffs and process
+     ;; buffers in another window this way).  The takeover window keeps its
+     ;; stashed state, and the new window is marked so an even deeper follow-up
+     ;; is claimed too.
+     ((and tw (or (eq (selected-window) tw)
+                  (window-parameter (selected-window) 'alonso--pair-followup)))
+      (let ((win (ignore-errors (split-window (selected-window) nil 'below))))
+        (when win
+          (set-window-parameter win 'alonso--pair-followup t)
+          (window--display-buffer buffer win 'window alist)))))))
+
+;; Appended, so any `display-buffer-alist' entry the user already has keeps
+;; priority over this one.
+(add-to-list 'display-buffer-alist
+             '(alonso--pair-window-takeover-p alonso--display-in-pair-window)
+             t)
+
 ;;;###autoload
 (defun alonso-open ()
   "Start the bridge and set up the llm-bridge window layout.
 Divides the selected window in two: the left side keeps the buffer that
 was already open and the right side shows the llm-bridge (conversation
-on top, input buffer below, ~20% of the frame height)."
+on top, input buffer below, ~20% of the frame height).  The conversation and
+the input are then bound together as a single atomic window (see
+`alonso--make-windows-atomic'): closing or hiding one closes both, and
+`delete-other-windows' keeps the two of them."
   (interactive)
   (alonso--ensure-ready)
   (alonso--setup-input-mode-line)
@@ -857,7 +1143,11 @@ on top, input buffer below, ~20% of the frame height)."
            (target-height (max 1 (round (* frame-height 0.2))))
            (delta (- target-height (window-total-height input-window))))
       (when input-window
-        (window-resize input-window delta nil t)))))
+        (window-resize input-window delta nil t)))
+    ;; Bind the conversation and the input into one atomic window: closing,
+    ;; hiding or deleting one of them acts on the pair (see
+    ;; `alonso--make-windows-atomic').
+    (alonso--make-windows-atomic)))
 
 ;;; Step 4 — User commands (basic interaction)
 
