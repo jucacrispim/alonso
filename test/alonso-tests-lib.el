@@ -2,12 +2,11 @@
 
 ;;; Commentary:
 
-;; Shared helpers for the alonso test suite: the mini assert/reporting
-;; machinery (`alonso-tests--assert' and the pass/fail counters), the
+;; Shared helpers for the alonso ERT test suite: the
 ;; `declare-function'/`defvar' forward declarations for everything under test,
 ;; and the helpers that more than one test file uses (the Markdown rendering
 ;; helpers).  Every test file `(require 'alonso-tests-lib)'; the runner
-;; `alonso-tests.el' loads them all and prints the summary.
+;; `alonso-tests.el' loads them all and runs them with ERT.
 
 ;;; Code:
 
@@ -139,17 +138,6 @@
 (defvar alonso-image-max-width)
 (defvar alonso-display-other-buffers-in-pair)
 (defvar alonso--pair-restore)
-
-(defvar alonso-tests--pass 0)
-(defvar alonso-tests--fail 0)
-
-(defun alonso-tests--assert (label condition)
-  "Report the result of CONDITION under LABEL."
-  (if condition
-      (progn (setq alonso-tests--pass (1+ alonso-tests--pass))
-             (princ (format "PASS: %s\n" label)))
-    (setq alonso-tests--fail (1+ alonso-tests--fail))
-    (princ (format "FAIL: %s\n" label))))
 
 (defmacro alonso-tests--with-rendered (text &rest body)
   "Eval BODY in a temp buffer containing TEXT rendered as Markdown."

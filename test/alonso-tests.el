@@ -1,19 +1,25 @@
-;;; alonso-tests.el --- Runner for the alonso test suite  -*- lexical-binding: t; -*-
+;;; alonso-tests.el --- ERT runner for the alonso test suite  -*- lexical-binding: t; -*-
 
 ;;; Commentary:
 
 ;; Run with:
 ;;   emacs -Q --batch -l ~/mysrc/alonso/test/alonso-tests.el
 ;;
-;; Loads every alonso test file and exits with status 0 if all tests pass,
-;; 1 otherwise.  The test files themselves are plain Emacs Lisp that run
-;; `alonso-tests--assert' as they are loaded (see alonso-tests-lib.el).
+;; Loads every alonso test file (which define `ert-deftest's, see
+;; alonso-tests-lib.el for the shared helpers) and runs them, exiting with
+;; status 0 if all tests pass and 1 otherwise.
+;;
+;; Run a subset by loading only the wanted file(s) and selecting with ERT, e.g.
+;;   emacs -Q --batch -L test -l alonso-tests-lib.el -l alonso-ui-tests.el \
+;;     --eval '(ert-run-tests-batch-and-exit (quote (tag ui)))'
+;; or interactively: M-x ert RET ui RET.
 
 ;;; Code:
 
 (let ((dir (file-name-directory (or load-file-name buffer-file-name))))
   (when dir (add-to-list 'load-path dir)))
 
+(require 'ert)
 (require 'alonso-tests-lib)
 (require 'alonso-client-tests)
 (require 'alonso-ui-tests)
@@ -21,11 +27,9 @@
 (require 'alonso-markdown-tests)
 (require 'alonso-image-tests)
 
-;;; Summary
+;;; Run
 
-(princ (format "\n%d passed, %d failed\n"
-               alonso-tests--pass alonso-tests--fail))
 (when noninteractive
-  (kill-emacs (if (zerop alonso-tests--fail) 0 1)))
+  (ert-run-tests-batch-and-exit))
 
 ;;; alonso-tests.el ends here

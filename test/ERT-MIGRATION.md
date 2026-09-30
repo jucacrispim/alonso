@@ -4,6 +4,21 @@ Branch de trabalho: **`refactor-tests`**.
 Suíte atual (baseline no início do refactor): **282 passed, 0 failed**
 (commit-base `b885eac`).
 
+## Status — CONCLUÍDO
+
+Todas as fases foram aplicadas (commits `f765cdf` … fase 6), um commit por
+fase. O runner é agora o ERT: `emacs -Q --batch -l test/alonso-tests.el`
+→ **282 testes, 0 falhas**. A suíte antiga (asserts como efeito do load)
+foi removida; `alonso-tests-lib.el` guarda só as declarações e helpers, e
+`alonso-tests-ert.el` (scaffold da fase 0) foi apagado.
+
+Rodar um subconjunto por tag (o runner auto-encerra ao rodar tudo):
+
+    emacs -Q --batch -L test -l alonso-tests-lib.el -l alonso-ui-tests.el \
+      --eval '(ert-run-tests-batch-and-exit (quote (tag ui)))'
+
+Tags: `client`, `ui`, `tools`, `markdown`, `image`.
+
 ## Decisões confirmadas
 
 1. **Granularidade: um `ert-deftest` por asserção.** Preserva o relatório
