@@ -433,19 +433,12 @@ usage and show a per-turn summary with the model."
     (setq alonso-session-context-pct context-pct
           alonso-session-context-tokens context-tokens
           alonso-session-context-window context-window)
-    (let ((ctx (alonso--format-context)))
-      (alonso--insert-propertized
-       (format "\n[stop_reason=%s model=%s | turn: sent %s, received %s, cache %s/%s | session: sent %s, received %s, cache %s/%s%s]\n"
-               (gethash "stop_reason" ev)
-               (or model "?")
-               (alonso--format-tokens input) (alonso--format-tokens output)
-               (alonso--format-tokens cache-hit) (alonso--format-tokens cache-miss)
-               (alonso--format-tokens alonso-session-input-tokens)
-               (alonso--format-tokens alonso-session-output-tokens)
-               (alonso--format-tokens alonso-session-cache-hit-tokens)
-               (alonso--format-tokens alonso-session-cache-miss-tokens)
-               (if (string-empty-p ctx) "" (format " | ctx %s" ctx)))
-       'face 'alonso-separator-face)))
+    (alonso--insert-propertized
+     (format "\n[model=%s | turn: sent %s, received %s, cache %s/%s]\n"
+             (or model "?")
+             (alonso--format-tokens input) (alonso--format-tokens output)
+             (alonso--format-tokens cache-hit) (alonso--format-tokens cache-miss))
+     'face 'alonso-separator-face))
   (force-mode-line-update t)
   (alonso--show-answer-start))
 

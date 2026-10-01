@@ -303,14 +303,21 @@ right — the `alonso-open' layout — and makes the pair atomic."
                                 (alonso--mode-line-session))))
     (alonso--reset-session)))
 
-(ert-deftest alonso-ui--turn-summary-shows-context ()
+(ert-deftest alonso-ui--turn-summary-omits-session-and-context ()
   :tags '(ui)
   (unwind-protect
       (progn
         (alonso-ui-tests--feed-context-turn 0.42 420000 1000000)
-        (should (string-match-p (regexp-quote "ctx ◑ 42% (420k/1M)")
-                                (with-current-buffer (alonso--get-buffer)
-                                  (buffer-substring-no-properties (point-min) (point-max))))))
+        (let ((buf (with-current-buffer (alonso--get-buffer)
+                     (buffer-substring-no-properties (point-min) (point-max)))))
+          ;; The summary keeps the model and per-turn token/cache usage...
+          (should (string-match-p
+                   (regexp-quote "[model=gemini | turn: sent 5, received 3, cache 0/0]")
+                   buf))
+          ;; ...but drops stop_reason, the session totals and the context.
+          (should-not (string-match-p (regexp-quote "stop_reason") buf))
+          (should-not (string-match-p (regexp-quote "session:") buf))
+          (should-not (string-match-p (regexp-quote "ctx ") buf))))
     (alonso--reset-session)))
 
 (ert-deftest alonso-ui--turn-end-nil-context-shows-zero ()
