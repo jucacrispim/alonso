@@ -7,11 +7,16 @@
 #   make coverage   # run the suite under undercover and print line coverage
 #   make deps       # install/refresh dependencies (runtime + test) in eldev's cache
 #   make clean      # remove build/coverage artifacts
+#   make setupenv   # install the `eldev' script (into ~/.local/bin)
+#   make setupdocsenv # create ~/.virtualenvs/alonso-docs and install Sphinx
+#   make docs       # build the HTML documentation under docs/build/
 #
 # Requires the `eldev' script on PATH (see the Development section of
 # test/ERT-MIGRATION.md).
 
 ELDEV ?= eldev
+
+BUILD_SCRIPTS = build-scripts
 
 # Minimum overall line coverage enforced by `make coverage': the target fails
 # when the suite drops below it.  Defaults to 100% (the project is fully
@@ -21,7 +26,7 @@ ELDEV ?= eldev
 COVERAGE_MIN ?= 100
 export COVERAGE_MIN
 
-.PHONY: all test test-ui coverage coverage-lcov deps clean
+.PHONY: all test test-ui coverage coverage-lcov deps clean setupenv setupdocsenv docs doc
 
 all: test
 
@@ -48,3 +53,19 @@ deps:
 clean:
 	$(ELDEV) clean
 	rm -rf coverage.txt coverage/
+
+# Install the `eldev' script (the official installer drops it in ~/.local/bin).
+setupenv:
+	$(BUILD_SCRIPTS)/env.sh setup-env
+
+# Create the docs virtualenv (~/.virtualenvs/alonso-docs) and install Sphinx
+# plus the sphinx-pdj-theme.
+setupdocsenv:
+	$(BUILD_SCRIPTS)/env.sh setup-docs-env
+
+# Build the HTML documentation under docs/build/.
+docs:
+	$(BUILD_SCRIPTS)/env.sh build-docs
+
+# Alias for docs.
+doc: docs

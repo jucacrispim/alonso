@@ -1,0 +1,61 @@
+
+builders:
+
+  - name: Build & Test
+
+    platform: linux-generic
+
+    plugins:
+      - name: apt-install
+        packages:
+          - curl
+          - make
+          - git
+          - emacs-nox
+          - ca-certificates
+
+    envvars:
+      PATH: "$PATH:$HOME/.local/bin"
+      ENV: ci
+
+    steps:
+      - name: Setup env
+        command: make setupenv
+
+      - name: Test & coverage
+        command: make coverage
+
+
+  - name: Docs
+    branches:
+      - master
+
+    platform: linux-generic
+
+    triggered_by:
+      - builder_name: Build & Test
+        statuses:
+          - success
+
+    plugins:
+      - name: apt-install
+        packages:
+          - python3
+          - python3-venv
+          - python3-pip
+          - curl
+          - make
+
+    envvars:
+      ENV: ci
+
+    steps:
+
+      - name: Setup env
+        command: make setupdocsenv
+
+      - name: Build docs
+        command: make docs
+
+      - name: upload docs
+        command: ./build-scripts/upload_docs.sh

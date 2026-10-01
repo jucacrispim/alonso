@@ -26,5 +26,8 @@ ac-comphist.dat
 /coverage.txt
 /coverage/
 
+# Sphinx docs build
+/docs/build/
+
 # llm-bridge local context (não versionado)
 .llm-bridge/
