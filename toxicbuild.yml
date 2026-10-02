@@ -22,6 +22,9 @@ builders:
       - name: Setup env
         command: make setupenv
 
+      - name: Lint
+        command: make lint
+
       - name: Test & coverage
         command: make coverage
 

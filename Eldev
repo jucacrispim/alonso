@@ -6,12 +6,17 @@
 ;; main file (`alonso.el'); Eldev reads them from there and so does MELPA.  This
 ;; file only adds what is *not* a runtime dependency.
 
+;; Enable both GNU ELPA and MELPA.  Most of the tooling comes from MELPA
+;; (undercover, package-lint), but Eldev's `lint' command also runs relint,
+;; which ships only in GNU ELPA — without that archive the `re' linter is
+;; silently skipped.
+(eldev-use-package-archive 'gnu)
+(eldev-use-package-archive 'melpa)
 ;; undercover (and its own deps) come from MELPA and are needed only to run the
 ;; test suite / measure coverage — never by the package at runtime.  Declaring
 ;; them as an extra dependency of the `test' set means `eldev test',
 ;; `eldev coverage' and `eldev deps test' install them automatically (e.g. in
 ;; CI), while `Package-Requires:' stays clean.
-(eldev-use-package-archive 'melpa)
 (eldev-add-extra-dependencies 'test 'undercover)
 ;; The test files `require' the shared helpers by plain name
 ;; (`alonso-tests-lib'), so `test/' must be in `load-path' when they are loaded

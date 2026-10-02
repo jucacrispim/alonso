@@ -178,10 +178,11 @@ Instale o script `eldev` uma vez (o instalador oficial o coloca em
     eldev test                 # suíte ERT (282 testes)
     eldev test-ert '(tag ui)'  # só os testes de UI
     eldev coverage             # roda sob o undercover e imprime a cobertura
+    eldev lint                 # checkdoc + package-lint + relint
     eldev deps                 # instala/atualiza as dependências
 
-Ou, via `Makefile`: `make test`, `make test-ui`, `make coverage`, `make deps`,
-`make clean`.
+Ou, via `Makefile`: `make test`, `make test-ui`, `make coverage`, `make lint`,
+`make deps`, `make clean`.
 
 > Obs.: o runner standalone `emacs -Q --batch -l test/alonso-tests.el`
 > **não** é usado pelo Eldev — ele chama `ert-run-tests-batch-and-exit` e
@@ -210,6 +211,7 @@ Exemplos:
 Um pipeline mínimo:
 
     eldev deps test    # instala runtime + test deps
+    eldev lint         # os mesmos checks que o MELPA roda ao buildar
     eldev test         # 282 testes, código de saída 0/1
     eldev coverage     # (opcional) relatório; use COVERAGE_MIN para o gate
 

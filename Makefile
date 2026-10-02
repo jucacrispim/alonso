@@ -4,6 +4,7 @@
 #   make            # same as `make test`
 #   make test       # run the ERT suite
 #   make test-ui    # run only the `ui'-tagged tests
+#   make lint       # run the linters (checkdoc, package-lint, relint)
 #   make coverage   # run the suite under undercover and print line coverage
 #   make deps       # install/refresh dependencies (runtime + test) in eldev's cache
 #   make clean      # remove build/coverage artifacts
@@ -26,7 +27,7 @@ BUILD_SCRIPTS = scripts
 COVERAGE_MIN ?= 100
 export COVERAGE_MIN
 
-.PHONY: all test test-ui coverage coverage-lcov deps clean setupenv setupdocsenv docs doc
+.PHONY: all test test-ui lint coverage coverage-lcov deps clean setupenv setupdocsenv docs doc
 
 all: test
 
@@ -36,6 +37,11 @@ test:
 # Only the window/UI tests (the largest group):
 test-ui:
 	$(ELDEV) test-ert '(tag ui)'
+
+# Run the linters via Eldev: checkdoc (`doc'), package-lint (`package') and
+# relint (`re').  Same checks MELPA runs when building the package.
+lint:
+	$(ELDEV) lint
 
 # Line coverage, gated at COVERAGE_MIN (default 100%).  Override the
 # format/path/threshold via the environment, e.g.
