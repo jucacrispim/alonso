@@ -39,6 +39,7 @@ A few of the key bindings:
 | `C-c a k` | `alonso-kill`    | Terminate the bridge and clean up    |
 | `C-c a c` | `alonso-cancel`  | Cancel the current in-flight turn    |
 | `C-c a q` | `alonso-quit`    | Send `quit` to the bridge and stop   |
+| `C-c a w` | `alonso-toggle-show-thinking` | Toggle the thinking display (text or spinner placeholder) |
 
 ## Documentation
 

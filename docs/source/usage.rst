@@ -42,6 +42,10 @@ The prefix key ``C-c a`` holds every command:
    * - ``C-c a t``
      - ``alonso-set-thinking``
      - Toggle thinking on/off/unset per request.
+   * - ``C-c a w``
+     - ``alonso-toggle-show-thinking``
+     - Toggle how the thinking is displayed: the text (``alonso-show-thinking``
+       t) or the transient placeholder with the braille spinner (nil).
    * - ``C-c a e``
      - ``alonso-set-reasoning-effort``
      - Set the thinking depth (low/medium/high, empty = provider default) per
@@ -59,9 +63,14 @@ The conversation and the input buffer
 The conversation buffer shows the user prompts prefixed with ``>>> `` and the
 model's response streaming into it.  Thinking (chain-of-thought) is rendered in
 PaleVioletRed4 (``#8b475d``, set in ``pdj-theme.el``) and separated from the
-answer by two blank lines.  The model's answer is rendered as Markdown (faces,
-hidden markers, clickable links and fenced-code-block highlighting), without
-ever changing the buffer text — copying the conversation out is unaffected.
+answer by two blank lines.  When ``alonso-show-thinking`` is nil the thinking
+text is hidden instead and a transient placeholder is shown — the
+``alonso-thinking-placeholder`` string (``thinking…`` by default) with the
+braille spinner running just to its left — which disappears as soon as the
+answer (or a tool call) starts.  The model's answer is rendered as Markdown
+(faces, hidden markers, clickable links and fenced-code-block highlighting),
+without ever changing the buffer text — copying the conversation out is
+unaffected.
 
 In the input buffer:
 

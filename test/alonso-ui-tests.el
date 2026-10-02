@@ -47,6 +47,7 @@
 
 (defun alonso-ui-tests--reset-conversation-state ()
   "Empty the conversation buffer and clear the answer/turn state."
+  (alonso--thinking-placeholder-end)
   (with-current-buffer (alonso--get-buffer)
     (let ((inhibit-read-only t)) (erase-buffer)))
   (setq alonso--answer-start nil
@@ -1791,6 +1792,20 @@ Call FN with LEFT; clean up afterwards."
     (with-current-buffer (get-buffer-create alonso-input-buffer-name)
       (setq alonso-request-thinking 'unset))))
 
+(ert-deftest alonso-ui--toggle-show-thinking-on-to-off ()
+  :tags '(ui)
+  (let ((alonso-show-thinking t))
+    (cl-letf (((symbol-function 'message) (lambda (&rest _) nil)))
+      (call-interactively #'alonso-toggle-show-thinking))
+    (should-not alonso-show-thinking)))
+
+(ert-deftest alonso-ui--toggle-show-thinking-off-to-on ()
+  :tags '(ui)
+  (let ((alonso-show-thinking nil))
+    (cl-letf (((symbol-function 'message) (lambda (&rest _) nil)))
+      (call-interactively #'alonso-toggle-show-thinking))
+    (should alonso-show-thinking)))
+
 (ert-deftest alonso-ui--set-reasoning-effort-interactive-stores-override ()
   :tags '(ui)
   (unwind-protect
@@ -1899,6 +1914,95 @@ Call FN with LEFT; clean up afterwards."
                          (string-empty-p (buffer-string)))
                        (get-buffer-window alonso-input-buffer-name t)))))
     (alonso-tests--reset-windows)))
+
+;;; Thinking placeholder (when `alonso-show-thinking' is nil)
+
+(defun alonso-ui-tests--placeholder-text ()
+  "Return the whole conversation buffer text, without properties."
+  (with-current-buffer (alonso--get-buffer)
+    (buffer-substring-no-properties (point-min) (point-max))))
+
+(ert-deftest alonso-ui--thinking-placeholder-hides-thinking-text ()
+  :tags '(ui)
+  (let ((alonso-show-thinking nil))
+    (unwind-protect
+        (progn
+          (alonso-ui-tests--reset-conversation-state)
+          (alonso--on-thinking "segredo do modelo")
+          (should (equal alonso-thinking-placeholder
+                         (alonso-ui-tests--placeholder-text)))
+          (should (alonso--thinking-placeholder-active-p)))
+      (alonso-ui-tests--spinner-cleanup)
+      (alonso-ui-tests--reset-conversation-state))))
+
+(ert-deftest alonso-ui--thinking-placeholder-has-spinner-on-the-left ()
+  :tags '(ui)
+  (let ((alonso-show-thinking nil)
+        (alonso--spinner-index 0))
+    (unwind-protect
+        (progn
+          (alonso-ui-tests--reset-conversation-state)
+          (alonso--on-thinking "x")
+          (should (equal (concat (aref alonso--spinner-frames 0) " ")
+                       (overlay-get alonso--thinking-placeholder-overlay
+                                    'before-string))))
+      (alonso-ui-tests--spinner-cleanup)
+      (alonso-ui-tests--reset-conversation-state))))
+
+(ert-deftest alonso-ui--thinking-text-shown-when-enabled ()
+  :tags '(ui)
+  (let ((alonso-show-thinking t))
+    (unwind-protect
+        (progn
+          (alonso-ui-tests--reset-conversation-state)
+          (alonso--on-thinking "pensando muito")
+          (should (string-match-p "pensando muito"
+                                  (alonso-ui-tests--placeholder-text)))
+          (should-not (alonso--thinking-placeholder-active-p)))
+      (alonso-ui-tests--spinner-cleanup)
+      (alonso-ui-tests--reset-conversation-state))))
+
+(ert-deftest alonso-ui--spinner-tick-advances-placeholder-frame ()
+  :tags '(ui)
+  (let ((alonso-show-thinking nil)
+        (alonso--spinner-index 0))
+    (unwind-protect
+        (progn
+          (alonso-ui-tests--reset-conversation-state)
+          (alonso--on-thinking "x")
+          (alonso--spinner-tick)
+          (should (equal (concat (aref alonso--spinner-frames 1) " ")
+                       (overlay-get alonso--thinking-placeholder-overlay
+                                    'before-string))))
+      (alonso-ui-tests--spinner-cleanup)
+      (alonso-ui-tests--reset-conversation-state))))
+
+(ert-deftest alonso-ui--chunk-removes-thinking-placeholder ()
+  :tags '(ui)
+  (let ((alonso-show-thinking nil))
+    (unwind-protect
+        (progn
+          (alonso-ui-tests--reset-conversation-state)
+          (alonso--on-thinking "x")
+          (alonso--on-chunk "resposta final")
+          (should-not (alonso--thinking-placeholder-active-p))
+          (should (equal "resposta final"
+                         (alonso-ui-tests--placeholder-text))))
+      (alonso-ui-tests--spinner-cleanup)
+      (alonso-ui-tests--reset-conversation-state))))
+
+(ert-deftest alonso-ui--stop-spinner-removes-thinking-placeholder ()
+  :tags '(ui)
+  (let ((alonso-show-thinking nil))
+    (unwind-protect
+        (progn
+          (alonso-ui-tests--reset-conversation-state)
+          (alonso--on-thinking "x")
+          (should (alonso--thinking-placeholder-active-p))
+          (alonso--stop-spinner)
+          (should-not (alonso--thinking-placeholder-active-p)))
+      (alonso-ui-tests--spinner-cleanup)
+      (alonso-ui-tests--reset-conversation-state))))
 
 (provide 'alonso-ui-tests)
 

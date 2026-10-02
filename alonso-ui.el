@@ -136,8 +136,22 @@ finished.  Add functions with `add-hook'."
   :group 'alonso)
 
 (defcustom alonso-show-thinking t
-  "Whether to display the model's chain-of-thought (thinking events)."
+  "How to display the model's chain-of-thought (thinking events).
+
+When non-nil (the default) the streamed thinking text is inserted into the
+conversation.  When nil the text is hidden and a transient
+`alonso-thinking-placeholder' is shown instead, with the braille spinner
+running just to its left; it disappears as soon as the answer (or a tool
+call) starts."
   :type 'boolean
+  :group 'alonso)
+
+(defcustom alonso-thinking-placeholder "thinking…"
+  "Text shown while the model is thinking, when `alonso-show-thinking' is nil.
+The braille spinner is rendered just to the left of this text.  The
+placeholder is transient: it disappears as soon as the answer (or a tool
+call) starts."
+  :type 'string
   :group 'alonso)
 
 (defface alonso-thinking-face
@@ -286,10 +300,11 @@ displayed."
   "Non-nil while the turn spinner is active (from prompt to turn end).")
 
 (defun alonso--spinner-tick ()
-  "Advance the spinner frame and update the mode-line."
+  "Advance the spinner frame and update the mode-line and the placeholder."
   (setq alonso--spinner-index
         (mod (1+ alonso--spinner-index)
              (length alonso--spinner-frames)))
+  (alonso--thinking-placeholder-tick)
   (force-mode-line-update t))
 
 (defun alonso--start-spinner ()
@@ -305,12 +320,64 @@ chunks do not restart the spinner from the beginning."
                           #'alonso--spinner-tick))))
 
 (defun alonso--stop-spinner ()
-  "Stop the braille spinner timer and clear the active state."
+  "Stop the braille spinner timer and clear the active state.
+Also removes the thinking placeholder, if one is shown."
+  (alonso--thinking-placeholder-end)
   (setq alonso--spinner-active nil)
   (when (timerp alonso--spinner-timer)
     (cancel-timer alonso--spinner-timer)
     (setq alonso--spinner-timer nil))
   (force-mode-line-update t))
+
+;;; Transient "thinking…" placeholder (when `alonso-show-thinking' is nil)
+
+(defvar alonso--thinking-placeholder-overlay nil
+  "Overlay showing the transient thinking placeholder, or nil.
+
+When `alonso-show-thinking' is nil the model's chain-of-thought is not
+inserted; instead `alonso-thinking-placeholder' is shown with the braille
+spinner to its left.  This holds the overlay covering that text while it is
+active (see `alonso--thinking-placeholder-start').")
+
+(defun alonso--thinking-placeholder-active-p ()
+  "Return non-nil when the thinking placeholder is currently shown."
+  (and (overlayp alonso--thinking-placeholder-overlay)
+       (overlay-buffer alonso--thinking-placeholder-overlay)))
+
+(defun alonso--thinking-placeholder-frame ()
+  "Return the current spinner frame, plus a trailing space."
+  (concat (aref alonso--spinner-frames alonso--spinner-index) " "))
+
+(defun alonso--thinking-placeholder-start ()
+  "Show the transient thinking placeholder with the spinner to its left.
+Idempotent: does nothing when the placeholder is already shown, so it can
+be called on every `thinking' fragment."
+  (unless (alonso--thinking-placeholder-active-p)
+    (let ((start (alonso--insert-propertized
+                  alonso-thinking-placeholder 'face 'alonso-thinking-face)))
+      (with-current-buffer (alonso--get-buffer)
+        (setq alonso--thinking-placeholder-overlay
+              (make-overlay start (point-max)))
+        (overlay-put alonso--thinking-placeholder-overlay
+                     'before-string
+                     (alonso--thinking-placeholder-frame))))))
+
+(defun alonso--thinking-placeholder-end ()
+  "Hide and remove the transient thinking placeholder, if it is shown."
+  (when (alonso--thinking-placeholder-active-p)
+    (let ((ov alonso--thinking-placeholder-overlay))
+      (with-current-buffer (overlay-buffer ov)
+        (let ((inhibit-read-only t))
+          (delete-region (overlay-start ov) (overlay-end ov))))
+      (delete-overlay ov))
+    (setq alonso--thinking-placeholder-overlay nil)))
+
+(defun alonso--thinking-placeholder-tick ()
+  "Refresh the placeholder's spinner frame while it is shown."
+  (when (alonso--thinking-placeholder-active-p)
+    (overlay-put alonso--thinking-placeholder-overlay
+                 'before-string
+                 (alonso--thinking-placeholder-frame))))
 
 (defun alonso--mode-line-status ()
   "Return the mode-line status fragment for the conversation buffer.
@@ -336,6 +403,7 @@ Empty until the first `turn_end' reports a model."
 
 (defun alonso--on-chunk (text)
   "Handle a `chunk' event with TEXT (streaming fragment)."
+  (alonso--thinking-placeholder-end)
   (when alonso--after-tool-separator-pending
     ;; The tool output finished and the model resumed: separate it with
     ;; two blank lines (three newlines), only on the first transition.
@@ -355,21 +423,27 @@ Empty until the first `turn_end' reports a model."
   (alonso--render-answer-live))
 
 (defun alonso--on-thinking (text)
-  "Handle a `thinking' event with TEXT (chain-of-thought fragment)."
+  "Handle a `thinking' event with TEXT (chain-of-thought fragment).
+
+When `alonso-show-thinking' is non-nil TEXT is inserted; otherwise the
+transient placeholder is shown instead (see
+`alonso--thinking-placeholder-start')."
   (alonso--render-answer)
   (alonso--start-spinner)
-  (when alonso-show-thinking
-    (when alonso--after-tool-separator-pending
-      ;; The tool output finished and the model started thinking: separate
-      ;; it with two blank lines, only on the first transition.  Re-anchor
-      ;; at the end first (see `alonso--pin-window-to-end'): the
-      ;; confirmation left the window on the tool line.
-      (setq alonso--after-tool-separator-pending nil)
-      (alonso--pin-window-to-end)
-      (alonso--insert "\n\n\n"))
-    (setq alonso--thinking-separator-pending t)
-    (alonso--insert-propertized
-     text 'face 'alonso-thinking-face)))
+  (when alonso--after-tool-separator-pending
+    ;; The tool output finished and the model started thinking: separate
+    ;; it with two blank lines, only on the first transition.  Re-anchor
+    ;; at the end first (see `alonso--pin-window-to-end'): the
+    ;; confirmation left the window on the tool line.
+    (setq alonso--after-tool-separator-pending nil)
+    (alonso--pin-window-to-end)
+    (alonso--insert "\n\n\n"))
+  (if alonso-show-thinking
+      (progn
+        (setq alonso--thinking-separator-pending t)
+        (alonso--insert-propertized
+         text 'face 'alonso-thinking-face))
+    (alonso--thinking-placeholder-start)))
 
 (defun alonso--format-tokens--scaled (n div)
   "Return N divided by DIV, rounded to 2 decimals, without trailing zeros.
@@ -1294,6 +1368,17 @@ One of \"low\", \"medium\" or \"high\"; empty = provider default."
   (alonso--send "set_knowledge_bases" (list "bases" bases)))
 
 ;;;###autoload
+(defun alonso-toggle-show-thinking ()
+  "Toggle how the model's chain-of-thought is displayed.
+Switch `alonso-show-thinking' between t (insert the thinking text) and
+nil (hide it and show the transient placeholder, with the braille spinner
+just to its left)."
+  (interactive)
+  (setq alonso-show-thinking (not alonso-show-thinking))
+  (message "Thinking display: %s"
+           (if alonso-show-thinking "text" "placeholder (spinner)")))
+
+;;;###autoload
 (defun alonso-quit ()
   "Send `quit' to the bridge, ending the process."
   (interactive)
@@ -1362,6 +1447,7 @@ Then reopen the llm-bridge window layout."
     (define-key map (kbd "p") #'alonso-set-provider)
     (define-key map (kbd "m") #'alonso-set-model)
     (define-key map (kbd "t") #'alonso-set-thinking)
+    (define-key map (kbd "w") #'alonso-toggle-show-thinking)
     (define-key map (kbd "e") #'alonso-set-reasoning-effort)
     (define-key map (kbd "i") #'alonso-attach-image-file)
     (define-key map (kbd "u") #'alonso-attach-image-url)

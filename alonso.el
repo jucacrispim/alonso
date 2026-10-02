@@ -77,6 +77,9 @@
 ;;                                     prompt (empty = provider default)
 ;;   C-c a t  alonso-set-thinking
 ;;                                     toggle thinking on/off/unset per request
+;;   C-c a w  alonso-toggle-show-thinking
+;;                                     toggle how thinking is shown (text vs.
+;;                                     the transient spinner placeholder)
 ;;   C-c a e  alonso-set-reasoning-effort
 ;;                                     set the thinking depth (low/medium/high,
 ;;                                     empty = provider default) per request
@@ -97,7 +100,11 @@
 ;; The conversation shows user prompts prefixed with ">>> " and the model's
 ;; response streams into it, with thinking (chain-of-thought) rendered in
 ;; PaleVioletRed4 (#8b475d, set in pdj-theme.el) and separated from the
-;; answer by two blank lines. Mutating tool calls show their confirmation
+;; answer by two blank lines.  When `alonso-show-thinking' is nil the
+;; thinking text is hidden and a transient placeholder
+;; (`alonso-thinking-placeholder', \"thinking…\") is shown instead, with the
+;; braille spinner just to its left.  Mutating tool calls show their
+;; confirmation
 ;; question right away, one at a time — the tool's icon and the
 ;; `Run tool: <name>?' prompt, e.g. "🖥 Run tool: shell?", followed by the
 ;; parameters beneath it; once the user answers, the

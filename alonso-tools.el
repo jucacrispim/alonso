@@ -144,6 +144,7 @@ prepended to the front of that same question line by
 question is visible from the start (not only after the answer).  Returns the
 buffer position of the visible title/parameters."
   (alonso--render-answer)
+  (alonso--thinking-placeholder-end)
   (let* ((read-only (alonso--tool-read-only-p name))
          (header (if read-only
                      (format "\n%s %s\n" (alonso--tool-icon name) name)
