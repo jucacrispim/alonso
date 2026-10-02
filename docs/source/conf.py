@@ -11,7 +11,8 @@ import sphinx_pdj_theme
 project = 'alonso'
 copyright = '2026, Juca Crispim'
 author = 'Juca Crispim'
-release = 'v0.1'
+version = '0.1'
+release = '0.1.0'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
