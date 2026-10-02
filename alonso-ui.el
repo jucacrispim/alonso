@@ -26,7 +26,7 @@
 ;; spinner and mode-line fragments, the event render handlers (chunks,
 ;; thinking, turn summaries, errors, hooks), the `/project' command, the window
 ;; layout (open/restart/kill, including the atomic group that makes the
-;; conversation and the input behave as a single window) and the `C-c a' prefix map.
+;; conversation and the input behave as a single window) and the `C-c C-a' prefix map.
 ;;
 ;; The three rendering/UX pieces live in sibling files that build on top of
 ;; this one:
@@ -162,23 +162,23 @@ call) starts."
 ;;; Conversation buffer state used by the render handlers
 
 (defvar alonso--thinking-separator-pending nil
-  "Non-nil when thinking was shown in the current turn and the two blank
-lines separating it from the response have not been inserted yet.
-Set by `alonso--on-thinking', consumed by the first `chunk'
+  "Non-nil when thinking was shown in the current turn.
+The two blank lines separating it from the response have not been inserted
+yet.  Set by `alonso--on-thinking', consumed by the first `chunk'
 and cleared at the start/end of every turn.")
 
 (defvar alonso--tool-call-pos nil
-  "Buffer position of the start of the visible line (title for read-only
-tools, `Run tool: ...?' question for mutating ones) of the last tool call
-shown.  Used as the scroll anchor while the tool's confirmation question is
-being asked (`alonso--keep-question-visible'), so the beginning of a
-possibly large diff stays visible, and as the spot where
+  "Buffer position of the start of the last tool call's visible line.
+That line is a title for read-only tools and the `Run tool: ...?' question
+for mutating ones.  Used as the scroll anchor while the tool's confirmation
+question is being asked (`alonso--keep-question-visible'), so the beginning
+of a possibly large diff stays visible, and as the spot where
 `alonso--record-tool-confirmation' prepends the `[allowed]' /
 `[denied]' tag.")
 
 (defvar alonso--tool-confirm-pos nil
-  "Buffer position just after the parameters of the last tool call shown,
-kept as the lower scroll anchor while the confirmation is pending.")
+  "Buffer position just after the parameters of the last tool call shown.
+Kept as the lower scroll anchor while the confirmation is pending.")
 
 
 ;;; Answer segment (drives the Markdown renderer)
@@ -491,8 +491,9 @@ denominator is shown as \"?\"."
               "?"))))
 
 (defun alonso--on-turn-end (ev)
-  "Handle a `turn_end' event EV: finalize turn tokens, accumulate session
-usage and show a per-turn summary with the model."
+  "Handle a `turn_end' event EV.
+Finalize turn tokens, accumulate session usage and show a per-turn summary
+with the model."
   (alonso--render-answer)
   (alonso--stop-spinner)
   (setq alonso-in-turn nil
@@ -587,7 +588,7 @@ the model in the turn that just finished (the `files' field of EV)."
 A hook (a prompt starting with \"#\") runs a local script instead of calling
 the LLM; the bridge replies with a single `hook_action' event and NO
 `turn_end', so this handler also finalizes the client-side \"turn\" state
-(stopping the spinner, clearing `alonso-in-turn' and the separator
+\(stopping the spinner, clearing `alonso-in-turn' and the separator
 flags).  There is no token/model accounting here because there is no
 `turn_end'.  When EV carries an `error' field (script missing, invalid name
 or non-zero exit) the message is shown in the error face; otherwise the
@@ -615,8 +616,8 @@ script's combined output is inserted as plain text."
 
 (defvar alonso-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-c a q") #'alonso-quit)
-    (define-key map (kbd "C-c a k") #'alonso-kill)
+    (define-key map (kbd "C-c C-a q") #'alonso-quit)
+    (define-key map (kbd "C-c C-a k") #'alonso-kill)
     map)
   "Keymap for `alonso-mode'.")
 
@@ -809,8 +810,8 @@ keybindings); the package itself knows nothing about projects."
   :group 'alonso)
 
 (defun alonso--apply-project-dir-locals (dir)
-  "Set `default-directory' of the current buffer to DIR and load its
-.dir-locals.el, respecting `safe-local-variable-values'.
+  "Set `default-directory' of the current buffer to DIR.
+Load its .dir-locals.el, respecting `safe-local-variable-values'.
 
 Uses `hack-dir-local-variables-non-file-buffer' so that only variables
 present in `safe-local-variable-values' are applied silently; unsafe ones
@@ -821,9 +822,9 @@ hook it triggers (e.g. project keybindings) fires as usual."
     (hack-dir-local-variables-non-file-buffer)))
 
 (defun alonso--handle-slash-command (text)
-  "Check if TEXT is a slash command (e.g. /project <name>), execute it and return non-nil if handled.
-
-The `/project' argument is resolved against `alonso-project-dir': when that
+  "Check if TEXT is a slash command, run it and return non-nil if handled.
+For example /project <name>.  The `/project' argument is resolved against
+`alonso-project-dir': when that
 variable is non-nil the argument is a project NAME (resolved as BASE/NAME),
 otherwise it is a PATH expanded with `expand-file-name'.  After switching the
 new directory is passed to `alonso-project-change-hook'."
@@ -872,8 +873,9 @@ carries images."
 
 (define-minor-mode alonso-input-mode
   "Minor mode for typing input destined to the llm-bridge.
-C-c C-c sends the whole buffer; RET inserts a newline.  C-y yanks an image
-from the clipboard when there is one (see `alonso-yank')."
+\\<alonso-input-mode-map>\\[alonso-send-input] sends the whole buffer; RET
+inserts a newline.  \\[alonso-yank] yanks an image from the clipboard when
+there is one (see `alonso-yank')."
   :lighter " LBIn"
   :keymap (let ((map (make-sparse-keymap)))
             (define-key map (kbd "C-c C-c") #'alonso-send-input)
@@ -889,8 +891,10 @@ from the clipboard when there is one (see `alonso-yank')."
     ;; single space) sitting at the end of the line, dropping the attachment.
     (setq-local electric-indent-mode nil)
     ;; Let `yank-media' (and `alonso-yank', via it) insert clipboard
-    ;; images inline in this buffer.
-    (yank-media-handler "image/.*" #'alonso--yank-media-image)))
+    ;; images inline in this buffer.  `yank-media-handler' only exists
+    ;; since Emacs 29.1, so guard the call.
+    (when (fboundp 'yank-media-handler)
+      (yank-media-handler "image/.*" #'alonso--yank-media-image))))
 
 (defun alonso--mode-line-session ()
   "Return the mode-line fragment with the session token usage.
@@ -934,7 +938,7 @@ the mode-line, so neither is repeated here.  Empty when none is set."
         (push (format "effort=%s" alonso-request-reasoning-effort) parts))
       (if parts
           (propertize (concat " [" (mapconcat #'identity (nreverse parts) " ") "]")
-                      'help-echo "Thinking / reasoning-effort overrides (C-c a t / e)")
+                      'help-echo "Thinking / reasoning-effort overrides (C-c C-a t / e)")
         ""))))
 
 (defun alonso--setup-input-mode-line ()
@@ -1174,7 +1178,7 @@ back.  A no-op while no takeover stashed a state."
 (defun alonso--display-in-pair-window (buffer alist)
   "Display BUFFER in the pair's column, over its full height.
 Display action function for the `display-buffer-alist' entry registered
-below.  Two cases:
+below; ALIST (the display action) is accepted but ignored.  Two cases:
 
   - the pair is on screen: the conversation window is reused to show BUFFER
     over the full column height and the input window is deleted, so the
@@ -1307,8 +1311,9 @@ the input are then bound together as a single atomic window (see
 
 ;;;###autoload
 (defun alonso-set-provider (provider)
-  "Set the provider override for the next prompt (empty = default).
-The override is sent as the `provider' field of the next `prompt'."
+  "Set the provider override for the next prompt.
+PROVIDER is a provider name, or an empty string for the default.  The
+override is sent as the `provider' field of the next `prompt'."
   (interactive
    (list (completing-read
           "Provider for the next prompt (empty = default): "
@@ -1321,9 +1326,10 @@ The override is sent as the `provider' field of the next `prompt'."
 
 ;;;###autoload
 (defun alonso-set-model (model)
-  "Set the model override for the next prompt (empty = provider default).
-The override is sent as the `model' field of the next `prompt' and stays
-active for the following prompts until changed (mirrors the bridge)."
+  "Set the model override for the next prompt.
+MODEL empty means the provider default.  The override is sent as the
+`model' field of the next `prompt' and stays active for the following
+prompts until changed (mirrors the bridge)."
   (interactive "sModel for the next prompt (empty = provider default): ")
   (with-current-buffer (alonso--request-buffer)
     (setq-local alonso-request-model model))
@@ -1333,9 +1339,9 @@ active for the following prompts until changed (mirrors the bridge)."
 
 ;;;###autoload
 (defun alonso-set-thinking (thinking)
-  "Set the thinking override for the next prompt: on, off or unset.
-`on' forces thinking (deepseek-reasoner), `off' forces it off
-(deepseek-chat) and `unset' restores the provider's configured mode."
+  "Set the thinking override for the next prompt.
+THINKING is `on' (forces thinking, deepseek-reasoner), `off' (forces it
+off, deepseek-chat) or `unset' (restores the provider's configured mode)."
   (interactive
    (list (intern (completing-read
                   "Thinking for the next prompt (unset/on/off): "
@@ -1352,7 +1358,8 @@ active for the following prompts until changed (mirrors the bridge)."
 ;;;###autoload
 (defun alonso-set-reasoning-effort (effort)
   "Set the thinking depth (reasoning_effort) for the next prompt.
-One of \"low\", \"medium\" or \"high\"; empty = provider default."
+EFFORT is one of \"low\", \"medium\" or \"high\"; empty means the provider
+default."
   (interactive
    (list (completing-read
           "Reasoning effort for the next prompt (empty = default): "
@@ -1452,10 +1459,10 @@ Then reopen the llm-bridge window layout."
     (define-key map (kbd "i") #'alonso-attach-image-file)
     (define-key map (kbd "u") #'alonso-attach-image-url)
     map)
-  "Keymap for the `C-c a' prefix of the llm-bridge commands.")
+  "Keymap for the llm-bridge commands under \\[alonso-prefix-map].")
 
 ;;;###autoload
-(global-set-key (kbd "C-c a") alonso-prefix-map)
+(global-set-key (kbd "C-c C-a") alonso-prefix-map)
 
 (provide 'alonso-ui)
 

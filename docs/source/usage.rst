@@ -4,7 +4,7 @@ Usage
 Starting the client
 -------------------
 
-The prefix key ``C-c a`` holds every command:
+The prefix key ``C-c C-a`` holds every command:
 
 .. list-table::
    :header-rows: 1
@@ -13,47 +13,47 @@ The prefix key ``C-c a`` holds every command:
    * - Key
      - Command
      - Description
-   * - ``C-c a l``
+   * - ``C-c C-a l``
      - ``alonso-open``
      - Start the client: split the window in two (left keeps the current
        buffer; right shows the conversation on top and the input buffer
        below, ~20% of the frame).
-   * - ``C-c a o``
+   * - ``C-c C-a o``
      - ``alonso-open``
      - Alias for ``alonso-open``.
-   * - ``C-c a r``
+   * - ``C-c C-a r``
      - ``alonso-restart``
      - Kill the bridge, clear the buffers, reset the state and reopen.
-   * - ``C-c a k``
+   * - ``C-c C-a k``
      - ``alonso-kill``
      - Terminate the bridge and clean up.
-   * - ``C-c a c``
+   * - ``C-c C-a c``
      - ``alonso-cancel``
      - Cancel the current in-flight turn.
-   * - ``C-c a q``
+   * - ``C-c C-a q``
      - ``alonso-quit``
      - Send ``quit`` to the bridge and stop.
-   * - ``C-c a p``
+   * - ``C-c C-a p``
      - ``alonso-set-provider``
      - Set the provider override for the next prompt.
-   * - ``C-c a m``
+   * - ``C-c C-a m``
      - ``alonso-set-model``
      - Set the model override for the next prompt (empty = provider default).
-   * - ``C-c a t``
+   * - ``C-c C-a t``
      - ``alonso-set-thinking``
      - Toggle thinking on/off/unset per request.
-   * - ``C-c a w``
+   * - ``C-c C-a w``
      - ``alonso-toggle-show-thinking``
      - Toggle how the thinking is displayed: the text (``alonso-show-thinking``
        t) or the transient placeholder with the braille spinner (nil).
-   * - ``C-c a e``
+   * - ``C-c C-a e``
      - ``alonso-set-reasoning-effort``
      - Set the thinking depth (low/medium/high, empty = provider default) per
        request.
-   * - ``C-c a i``
+   * - ``C-c C-a i``
      - ``alonso-attach-image-file``
      - Attach an image (by path) to the next prompt.
-   * - ``C-c a u``
+   * - ``C-c C-a u``
      - ``alonso-attach-image-url``
      - Attach an image (by URL) to the next prompt.
 

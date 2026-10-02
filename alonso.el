@@ -46,7 +46,7 @@
 ;;     their minor modes and keymaps, the insertion helpers, the shared
 ;;     conversation state, the braille spinner, the mode-line fragments, the
 ;;     event render handlers, the `/project' command, the window layout
-;;     (open/restart/kill) and the `C-c a' prefix map.
+;;     (open/restart/kill) and the `C-c C-a' prefix map.
 ;;
 ;; and the rendering/UX pieces that build on the shell (each requires
 ;; alonso-ui.el):
@@ -64,29 +64,29 @@
 ;;
 ;;; Usage:
 ;;
-;;   C-c a l  alonso-open      start the client: divides the window in
-;;   C-c a o                           two (left keeps the current buffer; right
+;;   C-c C-a l  alonso-open      start the client: divides the window in
+;;   C-c C-a o                           two (left keeps the current buffer; right
 ;;                                     shows the conversation on top and the
 ;;                                     input buffer below, ~20% of the frame)
-;;   C-c a r  alonso-restart   kill the bridge, clear the buffers,
+;;   C-c C-a r  alonso-restart   kill the bridge, clear the buffers,
 ;;                                     reset the state and reopen
-;;   C-c a k  alonso-kill      terminate the bridge and clean up
-;;   C-c a c  alonso-cancel    cancel the current in-flight turn
-;;   C-c a q  alonso-quit      send quit to the bridge and stop
-;;   C-c a m  alonso-set-model set the model override for the next
+;;   C-c C-a k  alonso-kill      terminate the bridge and clean up
+;;   C-c C-a c  alonso-cancel    cancel the current in-flight turn
+;;   C-c C-a q  alonso-quit      send quit to the bridge and stop
+;;   C-c C-a m  alonso-set-model set the model override for the next
 ;;                                     prompt (empty = provider default)
-;;   C-c a t  alonso-set-thinking
+;;   C-c C-a t  alonso-set-thinking
 ;;                                     toggle thinking on/off/unset per request
-;;   C-c a w  alonso-toggle-show-thinking
+;;   C-c C-a w  alonso-toggle-show-thinking
 ;;                                     toggle how thinking is shown (text vs.
 ;;                                     the transient spinner placeholder)
-;;   C-c a e  alonso-set-reasoning-effort
+;;   C-c C-a e  alonso-set-reasoning-effort
 ;;                                     set the thinking depth (low/medium/high,
 ;;                                     empty = provider default) per request
-;;   C-c a i  alonso-attach-image-file
+;;   C-c C-a i  alonso-attach-image-file
 ;;                                     attach an image (by path) to the next
 ;;                                     prompt
-;;   C-c a u  alonso-attach-image-url
+;;   C-c C-a u  alonso-attach-image-url
 ;;                                     attach an image (by URL) to the next
 ;;                                     prompt
 ;;
@@ -96,7 +96,7 @@
 ;; there is one, otherwise it yanks text as usual.
 ;;
 ;; In the input buffer, C-c C-c sends the prompt (RET inserts a newline). In the
-;; conversation buffer, C-c a q quits, C-c a k kills and C-c a c cancels.
+;; conversation buffer, C-c C-a q quits, C-c C-a k kills and C-c C-a c cancels.
 ;; The conversation shows user prompts prefixed with ">>> " and the model's
 ;; response streams into it, with thinking (chain-of-thought) rendered in
 ;; PaleVioletRed4 (#8b475d, set in pdj-theme.el) and separated from the

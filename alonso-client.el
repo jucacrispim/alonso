@@ -64,21 +64,21 @@
   :group 'alonso)
 
 (defcustom alonso-provider ""
-  "Optional provider override (passed as -provider flag). E.g. \"deepseek\" or \"google\". Empty = default."
+  "Optional provider override (passed as -provider flag).  E.g. \"deepseek\" or \"google\".  Empty = default."
   :type 'string
   :group 'alonso)
 
 (defcustom alonso-model ""
-  "Optional model override (passed as -model flag). Empty = provider default."
+  "Optional model override (passed as -model flag).  Empty = provider default."
   :type 'string
   :group 'alonso)
 
 (defcustom alonso-thinking 'unset
   "Thinking mode global/startup (passed as -thinking flag).
-`unset' omits the flag (uses the bridge default), `t' forces thinking on
-(-thinking, deepseek-reasoner when there is no explicit model) and `off'
-forces it off (-thinking=false, deepseek-chat).  To override per request,
-use `alonso-request-thinking'."
+Value `unset' omits the flag (uses the bridge default); t forces thinking
+on (-thinking, deepseek-reasoner when there is no explicit model) and
+`off' forces it off (-thinking=false, deepseek-chat).  To override per
+request, use `alonso-request-thinking'."
   :type '(choice (const :tag "Unset (bridge default)" unset)
                  (const :tag "On (deepseek-reasoner)" t)
                  (const :tag "Off (deepseek-chat)" off))
@@ -122,11 +122,11 @@ Mutually exclusive with `alonso-aggressive-prune'.  Off by default."
            (setq alonso-aggressive-prune nil))))
 
 (defcustom alonso-aggressive-prune nil
-  "Whether to enable aggressive history pruning in the bridge (passed as
-the -aggressive-prune flag).  When on, the bridge collapses each completed
-tool-calling turn into just the user prompt + final answer, dropping the
-intermediate tool calls, tool results and chain-of-thought from the history
-to save tokens and keep the prefix cacheable.
+  "Whether to enable aggressive history pruning in the bridge.
+Passed as the -aggressive-prune flag.  When on, the bridge collapses each
+completed tool-calling turn into just the user prompt + final answer,
+dropping the intermediate tool calls, tool results and chain-of-thought
+from the history to save tokens and keep the prefix cacheable.
 Mutually exclusive with `alonso-prune'.  Off by default."
   :type 'boolean
   :group 'alonso
@@ -183,10 +183,10 @@ must be treated as a deny so the turn does not hang waiting forever.")
   "List of active tool subprocesses (shell/grep), cleaned up on kill.")
 
 (defvar alonso--after-tool-separator-pending nil
-  "Non-nil when a tool call/result was just displayed in the current turn
-and the next model output (thinking or chunk) still needs the two blank
-lines separating it from the tool's output.
-Set by `alonso--send-tool-result', consumed by the first `thinking'
+  "Non-nil when a tool call/result was just displayed in the current turn.
+The next model output (thinking or chunk) still needs the two blank lines
+separating it from the tool's output.  Set by
+`alonso--send-tool-result', consumed by the first `thinking'
 or `chunk' that follows, and cleared at the start/end of every turn.")
 
 (defvar alonso-session-input-tokens 0
@@ -283,7 +283,7 @@ Empty string = omits the `model' field (uses the provider default)."
 
 (defcustom alonso-request-thinking 'unset
   "Thinking override for the next prompt (buffer-local to the input buffer).
-`t' = on, `off' = off, `unset' = omit (provider default)."
+Value t = on, `off' = off, `unset' = omit (provider default)."
   :type '(choice (const :tag "Unset (provider default)" unset)
                  (const :tag "On (deepseek-reasoner)" t)
                  (const :tag "Off (deepseek-chat)" off))
@@ -328,8 +328,8 @@ Returns \"\" when no override is set."
   "Convert an image SPEC plist into a JSON-ready hash table.
 SPEC is a plist matching one `images' entry the bridge accepts in a `prompt':
 either `:data' (inline base64, with an optional `:mime' media type), `:url'
-(a link passed through to the provider) or `:path' (a local file read by the
-bridge).  An optional `:detail' (DeepSeek) is also honored."
+\(a link passed through to the provider) or `:path' (a local file read by
+the bridge).  An optional `:detail' (DeepSeek) is also honored."
   (let ((tbl (make-hash-table :test 'equal))
         (data (plist-get spec :data))
         (url (plist-get spec :url))
@@ -356,7 +356,7 @@ bridge).  An optional `:detail' (DeepSeek) is also honored."
   "Build the `prompt' params plist from TEXT and the per-request overrides.
 Only the fields that were set are included, so the bridge keeps the provider
 defaults for the rest.  IMAGES, when non-nil, is a list of image spec plists
-(see `alonso--image-json') attached as the `images' array."
+\(see `alonso--image-json') attached as the `images' array."
   (let ((params (list "text" text)))
     (let ((buf (get-buffer alonso-input-buffer-name)))
       (when buf
@@ -385,7 +385,7 @@ defaults for the rest.  IMAGES, when non-nil, is a list of image spec plists
 
 (defun alonso--json-object (&rest args)
   "Build a JSON object string from ARGS as alternating key/value pairs.
-Each value may be a string, number, boolean (`t' or `:json-false'), hash
+Each value may be a string, number, boolean (t or `:json-false'), hash
 table, or nil (serialized as null)."
   (let ((tbl (make-hash-table :test 'equal)))
     (cl-loop for (k v) on args by #'cddr
@@ -409,7 +409,7 @@ PARAMS is a flat plist of alternating keys/values, e.g. (\"text\" \"oi\")."
   "Non-nil after the bridge sends the `ready' event (handshake done).")
 
 (defun alonso--process-sentinel (proc event)
-  "Sentinel for the llm-bridge process."
+  "Sentinel for the llm-bridge process PROC, called with the status EVENT."
   (when (memq (process-status proc) '(exit signal))
     (setq alonso-process nil
           alonso-ready nil
@@ -420,7 +420,7 @@ PARAMS is a flat plist of alternating keys/values, e.g. (\"text\" \"oi\")."
     (message "llm-bridge ended: %s" event)))
 
 (defun alonso--process-filter (_proc output)
-  "Filter for the llm-bridge process: accumulate lines and dispatch events."
+  "Filter for the llm-bridge process OUTPUT: accumulate lines, dispatch events."
   (setq alonso-line-buffer (concat alonso-line-buffer output))
   (let ((start 0) nl line)
     (while (setq nl (string-match-p "\n" alonso-line-buffer start))
@@ -527,11 +527,12 @@ execute synchronously (they are fast file operations)."
 
 (defun alonso--tool-read (input)
   "Tool `read': return the contents of the file at PATH.
-When the optional OFFSET (0-based line index) and/or LIMIT (max number of
-lines) are given, return only that slice of the file (lines from OFFSET, up
-to LIMIT lines); otherwise return the whole file."
+INPUT is the tool-call arguments hash table with PATH and, optionally,
+OFFSET (0-based line index) and LIMIT (max number of lines).  When either
+is given, return only that slice of the file (lines from OFFSET, up to
+LIMIT lines); otherwise return the whole file."
   (let ((path (alonso--hval input "path")))
-    (unless path (error "read: missing 'path'"))
+    (unless path (error "Read: missing 'path'"))
     (with-temp-buffer
       (insert-file-contents (expand-file-name path))
       (let* ((lines (split-string (buffer-string) "\n"))
@@ -547,10 +548,11 @@ to LIMIT lines); otherwise return the whole file."
             (mapconcat #'identity (cl-subseq lines start end) "\n")))))))
 
 (defun alonso--tool-write (input)
-  "Tool `write': write CONTENT to the file at PATH."
+  "Tool `write': write CONTENT to the file at PATH.
+INPUT is the tool-call arguments hash table with PATH and CONTENT."
   (let ((path (alonso--hval input "path"))
         (content (alonso--hval input "content")))
-    (unless (and path content) (error "write: missing 'path' or 'content'"))
+    (unless (and path content) (error "Write: missing 'path' or 'content'"))
     (with-temp-buffer
       (insert content)
       (write-region (point-min) (point-max) (expand-file-name path) nil 'quiet))
@@ -558,9 +560,11 @@ to LIMIT lines); otherwise return the whole file."
 
 (defun alonso--tool-shell-async (input id)
   "Run the `shell' tool COMMAND asynchronously via bash -c.
-Sends the tool_result when the process exits."
+INPUT is the tool-call arguments hash table (with COMMAND) and ID is the
+tool-call id echoed back in the tool_result.  Sends the tool_result when the
+process exits."
   (let ((command (alonso--hval input "command")))
-    (unless command (error "shell: missing 'command'"))
+    (unless command (error "Shell: missing 'command'"))
     (let ((proc (make-process
                  :name (format "llm-bridge-shell-%s" id)
                  :buffer nil
@@ -583,13 +587,15 @@ Sends the tool_result when the process exits."
 
 (defun alonso--tool-grep-async (input id)
   "Run the `grep' tool PATTERN under PATH asynchronously.
-The pattern is a POSIX extended regular expression (like `grep -E'), so a
-literal string must have its regex metacharacters escaped; output is one
-`file:line:text' entry per match.  Sends the tool_result when the process
-exits (0 = matches, 1 = no matches)."
+INPUT is the tool-call arguments hash table (with PATTERN and PATH) and ID
+is the tool-call id echoed back in the tool_result.  The pattern is a POSIX
+extended regular expression (like `grep -E'), so a literal string must have
+its regex metacharacters escaped; output is one `file:line:text' entry per
+match.  Sends the tool_result when the process exits (0 = matches, 1 = no
+matches)."
   (let ((pattern (alonso--hval input "pattern"))
         (path (or (alonso--hval input "path") ".")))
-    (unless pattern (error "grep: missing 'pattern'"))
+    (unless pattern (error "Grep: missing 'pattern'"))
     (let ((proc (make-process
                  :name (format "llm-bridge-grep-%s" id)
                  :buffer nil
@@ -622,20 +628,22 @@ tool_result."
   (setq alonso--tool-procs nil))
 
 (defun alonso--tool-glob (input)
-  "Tool `glob': find files matching PATTERN under PATH."
+  "Tool `glob': find files matching PATTERN under PATH.
+INPUT is the tool-call arguments hash table with PATTERN and PATH."
   (let ((pattern (alonso--hval input "pattern"))
         (base (or (alonso--hval input "path") default-directory)))
-    (unless pattern (error "glob: missing 'pattern'"))
+    (unless pattern (error "Glob: missing 'pattern'"))
     (let ((default-directory (expand-file-name base)))
       (mapconcat #'identity (file-expand-wildcards pattern) "\n"))))
 
 (defun alonso--tool-search-replace (input)
-  "Tool `search_replace': replace the first exact SEARCH in PATH with REPLACE."
+  "Tool `search_replace': replace the first exact SEARCH in PATH with REPLACE.
+INPUT is the tool-call arguments hash table with PATH, SEARCH and REPLACE."
   (let ((path (alonso--hval input "path"))
         (search (alonso--hval input "search"))
         (replace (alonso--hval input "replace")))
     (unless (and path search replace)
-      (error "search_replace: missing 'path', 'search' or 'replace'"))
+      (error "Search_replace: missing 'path', 'search' or 'replace'"))
     (let* ((full (expand-file-name path))
            (content (with-temp-buffer
                       (insert-file-contents full)
@@ -671,9 +679,10 @@ A bare command name is left untouched so it is found via PATH."
     cmd))
 
 (defun alonso--start-args ()
-  "Build the command-line args for starting the bridge from the startup
-defcustoms (`-provider', `-model', `-thinking', `-reasoning-effort',
-`-logfile', `-prune' and `-aggressive-prune')."
+  "Build the command-line args for starting the bridge.
+The args come from the startup defcustoms (`-provider', `-model',
+`-thinking', `-reasoning-effort', `-logfile', `-prune' and
+`-aggressive-prune')."
   (let (args)
     (unless (string-empty-p alonso-provider)
       (setq args (append args (list "-provider" alonso-provider))))
@@ -740,7 +749,7 @@ Raises an error if the process dies or the handshake times out (10s)."
 ;;; Tool decision logic — read-only classification and trust scope
 
 (defun alonso--tool-read-only-p (name)
-  "Return non-nil if tool NAME only reads data (runs without confirmation)."
+  "Return non-nil if tool NAME is read-only (needs no confirmation)."
   (memq (intern name) '(read grep glob knowledge)))
 
 (defun alonso--dispatch-tool-guarded (name input id)

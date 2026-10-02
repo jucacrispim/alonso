@@ -108,8 +108,8 @@ font family for the code (e.g. a monospaced one)."
 (defface alonso-md-url-face
   '((t (:inherit shadow)))
   "Face for the URL shown right after the text of a Markdown link.
-The URL is displayed visibly (e.g. \\\"docs (https://example.com)\\\"), dimmed so
-it does not compete with the link text."
+The URL is displayed visibly (e.g. \\\"docs (https://example.com)\\\"),
+dimmed so it does not compete with the link text."
   :group 'alonso)
 
 ;;; Markdown rendering of the model's answer
@@ -147,7 +147,7 @@ Has no effect when `alonso-render-markdown' is nil."
 When non-nil, a fenced code block whose language maps to an available major
 mode (see `alonso--md-lang-mode') is fontified with that mode's
 syntax highlighting, composed with the base `alonso-md-code-face'
-(the block font is controlled by `alonso-md-code-font').  When nil the
+\(the block font is controlled by `alonso-md-code-font').  When nil the
 block keeps only
 the base face (monospaced, no colors).  Has no effect when
 `alonso-render-markdown' is nil."
@@ -339,7 +339,8 @@ nil the raw `](url)' tail is kept instead, dimmed in `shadow'."
     (alonso--md-inline-region line-start line-end))))
 
 (defun alonso--md-fence-line (line-start line-end)
-  "Handle a ``` fence line: hide it as a marker (or dim it as code)."
+  "Handle a ``` fence line: hide it as a marker (or dim it as code).
+LINE-START and LINE-END delimit the fence line in the current buffer."
   (if alonso-hide-markdown-markers
       (put-text-property line-start (alonso--md-line-end) 'display "")
     (alonso--md-face line-start line-end 'alonso-md-code-face)))
@@ -376,7 +377,7 @@ nil the raw `](url)' tail is kept instead, dimmed in `shadow'."
     ("dockerfile" . dockerfile-mode))
   "Alist mapping a code-fence language to the major mode used to fontify it.
 Used by `alonso--md-highlight-code'.  A language with no entry here
-(or whose mode is unavailable) keeps only the base
+\(or whose mode is unavailable) keeps only the base
 `alonso-md-code-face' (monospaced, no colors).")
 
 (defun alonso--md-fence-lang ()

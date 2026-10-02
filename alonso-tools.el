@@ -46,8 +46,9 @@
     ("write"         . "✏️")
     ("search_replace" . "🔁")
     ("knowledge"     . "🧠"))
-  "Alist of tool name → unicode icon, shown before the tool name in the
-confirmation questions (the `Run tool: ...?' prompt and its recorded line).")
+  "Alist of tool name → unicode icon.
+Shown before the tool name in the confirmation questions (the
+`Run tool: ...?' prompt and its recorded line).")
 
 (defun alonso--tool-icon (name)
   "Return the unicode icon for tool NAME (a generic wrench when unknown)."
@@ -69,7 +70,8 @@ path.  Used in the confirmation question prompt."
 (defun alonso--confirm-question (name input)
   "Build the minibuffer confirmation question for tool NAME with INPUT.
 Prefixes the tool's unicode icon and, when available, shows the command
-(`shell'), pattern (`grep'/`glob') or path (file tools) right after the name,
+\(`shell'), pattern (`grep'/`glob') or path (file tools) right after the
+name,
 e.g. \"🖥 Run tool: shell · ps aux? \".  The minibuffer itself cannot render
 colors, so the detail is shown as plain text here."
   (let ((detail (alonso--tool-detail-string name input)))
@@ -182,9 +184,7 @@ buffer position of the visible title/parameters."
         (run-with-timer 0.5 nil #'alonso--confirm-pending)))
 
 (defun alonso--keep-question-visible (pos)
-  "Scroll the llm-bridge conversation window so that buffer position POS
-stays visible, a few lines below the top of the window.
-
+  "Scroll the conversation window so that POS stays visible near the top.
 POS is normally the start of the tool-confirmation line just inserted, or
 the start of the tool-call parameters while the confirmation question is
 being asked (see `alonso--confirm-pending').  After scrolling, that
@@ -205,8 +205,8 @@ than the window."
           (select-window sel))))))
 
 (defun alonso--record-tool-confirmation (_name _input allowed &optional trust)
-  "Record the tool-confirmation decision for a mutating tool call in the
-conversation buffer.  ALLOWED non-nil when the user permitted it.  The
+  "Record the tool-confirmation decision in the conversation buffer.
+ALLOWED non-nil when the user permitted it.  The
 confirmation question line (the `Run tool: <name>?' prompt) was
 already inserted by `alonso--show-tool-call'; this function merely
 prepends the visible `[allowed]' / `[denied]' tag (in the tool / error face)
@@ -429,8 +429,10 @@ menu displays exactly what is about to run (icon + command/pattern/path)."
     (alonso--confirm-question name input)))
 
 (defun alonso--confirm-pending (&optional queue)
-  "Confirm and execute each tool queued for confirmation, one question per
-tool call.  When the model responds with several tool calls the user is
+  "Confirm and execute each tool call queued for confirmation.
+QUEUE, when non-nil, is the batch to process; otherwise the pending
+`alonso--confirm-queue' is drained.  When the model responds with several
+tool calls the user is
 asked once for each of them (rather than a single batch question covering
 all), and each tool call is shown one at a time: the next one is only
 displayed (and asked) after the previous one has been answered, so the
@@ -446,7 +448,7 @@ waiting for / running the pending tools, so the conversation falls back to
 waiting for the user's next prompt.
 
 The questions are asked through the transient `alonso--confirm-menu'
-(or, without transient, the `alonso--ask-user-trust' char prompt).
+\(or, without transient, the `alonso--ask-user-trust' char prompt).
 Because the menu is asynchronous, the batch is driven by
 `alonso--confirm-next' / `alonso--confirm-answer' rather than
 by a single blocking loop."
@@ -520,7 +522,7 @@ by the `quit' handler here, so the turn never hangs."
 Reads the pending tool call and the remaining batch from
 `alonso--confirm-context' and continues via
 `alonso--confirm-next'.  Called by the confirmation menu suffixes
-(via `alonso--confirm-run'/`--confirm-deny') and by the fallback
+\(via `alonso--confirm-run'/`--confirm-deny') and by the fallback
 path in `alonso--confirm-ask'."
   (let* ((ctx alonso--confirm-context)
          (name (plist-get ctx :name))

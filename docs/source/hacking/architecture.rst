@@ -25,7 +25,7 @@ The dependency is strictly one-way::
   their minor modes and keymaps, the insertion helpers the renderers build on,
   the shared conversation state, the braille spinner, the mode-line fragments,
   the event render handlers, the ``/project`` command, the window layout
-  (open/restart/kill) and the ``C-c a`` prefix map.  It requires
+  (open/restart/kill) and the ``C-c C-a`` prefix map.  It requires
   ``alonso-client.el`` and reaches the leaf files' functions only at runtime
   (via ``declare-function``); the UI shell does **not** require the leaves.
 

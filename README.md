@@ -25,21 +25,21 @@ Clone the repository and put it on the load path, then require it:
 
 ## Usage
 
-`C-c a` is the prefix for every command.  `C-c a l` (or `C-c a o`) starts the
+`C-c C-a` is the prefix for every command.  `C-c C-a l` (or `C-c C-a o`) starts the
 client: it splits the frame in two, showing the conversation on top and the
 input buffer below.  In the input buffer, `C-c C-c` sends the prompt (`RET`
 inserts a newline).
 
 A few of the key bindings:
 
-| Key       | Command          | Description                          |
-|-----------|------------------|--------------------------------------|
-| `C-c a l` | `alonso-open`    | Start the client                     |
-| `C-c a r` | `alonso-restart` | Restart the bridge and reopen        |
-| `C-c a k` | `alonso-kill`    | Terminate the bridge and clean up    |
-| `C-c a c` | `alonso-cancel`  | Cancel the current in-flight turn    |
-| `C-c a q` | `alonso-quit`    | Send `quit` to the bridge and stop   |
-| `C-c a w` | `alonso-toggle-show-thinking` | Toggle the thinking display (text or spinner placeholder) |
+| Key         | Command          | Description                          |
+|-------------|------------------|--------------------------------------|
+| `C-c C-a l` | `alonso-open`    | Start the client                     |
+| `C-c C-a r` | `alonso-restart` | Restart the bridge and reopen        |
+| `C-c C-a k` | `alonso-kill`    | Terminate the bridge and clean up    |
+| `C-c C-a c` | `alonso-cancel`  | Cancel the current in-flight turn    |
+| `C-c C-a q` | `alonso-quit`    | Send `quit` to the bridge and stop   |
+| `C-c C-a w` | `alonso-toggle-show-thinking` | Toggle the thinking display (text or spinner placeholder) |
 
 ## Documentation
 
