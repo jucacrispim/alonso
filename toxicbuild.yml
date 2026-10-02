@@ -58,4 +58,4 @@ builders:
         command: make docs
 
       - name: upload docs
-        command: ./build-scripts/upload_docs.sh
+        command: ./scripts/upload_docs.sh

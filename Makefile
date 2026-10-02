@@ -16,7 +16,7 @@
 
 ELDEV ?= eldev
 
-BUILD_SCRIPTS = build-scripts
+BUILD_SCRIPTS = scripts
 
 # Minimum overall line coverage enforced by `make coverage': the target fails
 # when the suite drops below it.  Defaults to 100% (the project is fully
