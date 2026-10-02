@@ -20,7 +20,7 @@ if [ ! -d "$DOCS_VENV_DIR" ]
     fi
     source $DOCS_VENV_DIR/bin/activate
     echo "installing sphinx"
-    pip install sphinx sphinx-pdj-theme --extra-index-url=https://pypi.poraodojuca.dev
+    pip install sphinx sphinx-pdj-theme==0.7.4 --extra-index-url=https://pypi.poraodojuca.dev
 }
 
 build_docs(){
