@@ -24,7 +24,7 @@
 ;;
 ;; Part of the alonso test suite; `alonso-tests.el' is the runner.
 ;;
-;; Migrated to ERT (phase 5 of ERT-MIGRATION.md): one `ert-deftest' per
+;; Migrated to ERT: one `ert-deftest' per
 ;; assertion, all tagged `ui'.  The window/state setup that used to be shared
 ;; by the assertions in a block is now re-created by a per-scenario helper
 ;; (each deftest re-runs the prefix it needs), so the tests are order

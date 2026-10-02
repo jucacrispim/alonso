@@ -23,7 +23,7 @@
 ;;
 ;; Part of the alonso test suite; `alonso-tests.el' is the runner.
 ;;
-;; Migrated to ERT (phase 3 of ERT-MIGRATION.md): one `ert-deftest' per
+;; Migrated to ERT: one `ert-deftest' per
 ;; assertion, all tagged `tools'.  The two batch helpers that used to be
 ;; `cl-labels' locals are now top-level functions so the deftests can share
 ;; them.

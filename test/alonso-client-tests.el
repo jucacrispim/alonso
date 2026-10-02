@@ -23,7 +23,7 @@
 ;;
 ;; Part of the alonso test suite; `alonso-tests.el' is the runner.
 ;;
-;; Migrated to ERT (phase 4 of ERT-MIGRATION.md): one `ert-deftest' per
+;; Migrated to ERT: one `ert-deftest' per
 ;; assertion, all tagged `client'.
 
 ;;; Code:

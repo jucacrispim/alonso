@@ -5,3 +5,4 @@ Hacking
    :maxdepth: 2
 
    architecture
+   development

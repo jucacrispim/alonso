@@ -13,7 +13,7 @@
 #   make docs       # build the HTML documentation under docs/build/
 #
 # Requires the `eldev' script on PATH (see the Development section of
-# test/ERT-MIGRATION.md).
+# docs/source/hacking/development.rst).
 
 ELDEV ?= eldev
 
