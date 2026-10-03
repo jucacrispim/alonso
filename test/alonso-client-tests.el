@@ -127,46 +127,12 @@
                           (with-current-buffer (get-buffer "alonso")
                             (buffer-string)))))
 
-;;; Tools (file ops)
-
-(ert-deftest alonso-client--tool-write-returns-ok ()
-  :tags '(client)
-  (alonso-client-tests--with-temp-file f
-    (should (equal "ok"
-                   (alonso--tool-write
-                    (alonso--json-plist-to-hash
-                     (list "path" f "content" "have a nice day\nsecond line\n")))))))
-
-(ert-deftest alonso-client--tool-read-returns-content ()
-  :tags '(client)
-  (alonso-client-tests--with-temp-file f
-    (alonso--tool-write
-     (alonso--json-plist-to-hash
-      (list "path" f "content" "have a nice day\nsecond line\n")))
-    (should (equal "have a nice day\nsecond line\n"
-                   (alonso--tool-read
-                    (alonso--json-plist-to-hash (list "path" f)))))))
-
-(ert-deftest alonso-client--search-replace-first-occurrence-only ()
-  :tags '(client)
-  (alonso-client-tests--with-temp-file f
-    (alonso--tool-write
-     (alonso--json-plist-to-hash
-      (list "path" f "content" "have a nice day\nsecond line\n")))
-    (alonso--tool-search-replace
-     (alonso--json-plist-to-hash
-      (list "path" f "search" "a" "replace" "X")))
-    (should (equal "hXve a nice day\nsecond line\n"
-                   (alonso--tool-read
-                    (alonso--json-plist-to-hash (list "path" f)))))))
-
-(ert-deftest alonso-client--tool-glob-finds-file ()
-  :tags '(client)
-  (alonso-client-tests--with-temp-file f
-    (should (string-match-p (regexp-quote f)
-                            (alonso--tool-glob
-                             (alonso--json-plist-to-hash
-                              (list "pattern" (concat (file-name-directory f) "*.txt"))))))))
+;;; Tools
+;;
+;; The tool implementations (read/write/shell/grep/glob/search_replace) moved
+;; into the bridge (llm-bridge), which now executes them.  This client only
+;; displays tool calls and answers the bridge's confirmations, so the tests for
+;; the local tool implementations were removed along with them.
 
 ;;; Read-only tools
 
@@ -189,31 +155,6 @@
 (ert-deftest alonso-client--shell-is-not-read-only ()
   :tags '(client)
   (should (not (alonso--tool-read-only-p "shell"))))
-
-;;; grep tool — treats the pattern as a POSIX extended regex (like `grep -E').
-;;; Regression: the tool used to pass `-F' (fixed strings), so a regex the
-;;; model sent (e.g. "def setup.*:") never matched and it fell back to the
-;;; `shell' tool.  The pattern is now an ERE; the model escapes literal
-;;; metacharacters.  `-I' skips binary files and `-n' yields file:line:text.
-;;; This test stubs `make-process' to capture the exact command the tool
-;;; builds and runs.
-
-(ert-deftest alonso-client--grep-command-uses-ere ()
-  :tags '(client)
-  (let ((captured nil)
-        (alonso--tool-procs nil))
-    (cl-letf (((symbol-function 'make-process)
-               (lambda (&rest args)
-                 (setq captured (plist-get args :command))
-                 ;; return a fake process object so the tool's bookkeeping works
-                 (make-symbol "fake-grep-proc"))))
-      (alonso--tool-grep-async
-       (alonso--json-plist-to-hash
-        (list "pattern" "def setup.*:" "path" "/tmp"))
-       "call_grep"))
-    (should (and captured
-                 (member "-rnEI" captured)
-                 (not (member "-rnF" captured))))))
 
 ;;; Startup flags — model, thinking, reasoning_effort and logfile (--start-args)
 
@@ -575,6 +516,13 @@ returned and ARGS the arguments it received."
       (alonso--handle-line (alonso-client-tests--event-json "event" "tool_call" "id" "c1")))
     (should (hash-table-p got))))
 
+(ert-deftest alonso-client--handle-line-dispatches-tool-confirm ()
+  :tags '(client)
+  (let (got)
+    (cl-letf (((symbol-function 'alonso--on-tool-confirm) (lambda (ev) (setq got ev))))
+      (alonso--handle-line (alonso-client-tests--event-json "event" "tool_confirm" "id" "c1")))
+    (should (hash-table-p got))))
+
 (ert-deftest alonso-client--handle-line-dispatches-turn-end ()
   :tags '(client)
   (let (got)
@@ -624,9 +572,27 @@ returned and ARGS the arguments it received."
       (alonso--handle-line (alonso-client-tests--event-json "event" "weird")))
     (should warned)))
 
-;;; Tool-calling loop — `alonso--on-tool-call'
+;;; Tool-calling loop — `alonso--on-tool-call' and `alonso--on-tool-confirm'
 
-(ert-deftest alonso-client--tool-call-knowledge-is-shown-but-not-pending ()
+;; A read-only tool (executed by the bridge) is only displayed: no pending
+;; entry, no dispatch.
+
+(ert-deftest alonso-client--tool-call-read-only-is-only-shown ()
+  :tags '(client)
+  (let ((alonso-pending-tools nil) (alonso-confirm-tools t) shown dispatched)
+    (cl-letf (((symbol-function 'alonso--show-tool-call)
+               (lambda (_id name _input) (setq shown name)))
+              ((symbol-function 'alonso--dispatch-tool)
+               (lambda (&rest _) (setq dispatched t))))
+      (alonso--on-tool-call (alonso-client-tests--hash "id" "c1" "name" "read"
+                                                       "input" (make-hash-table))))
+    (should (and (equal "read" shown)
+                 (null dispatched)
+                 (null alonso-pending-tools)))))
+
+;; The `knowledge' tool is read-only too: shown, nothing pending.
+
+(ert-deftest alonso-client--tool-call-knowledge-is-only-shown ()
   :tags '(client)
   (let ((alonso-pending-tools nil) (alonso-confirm-tools t) shown)
     (cl-letf (((symbol-function 'alonso--show-tool-call)
@@ -635,51 +601,36 @@ returned and ARGS the arguments it received."
                                                        "input" (make-hash-table))))
     (should (and (equal "knowledge" shown) (null alonso-pending-tools)))))
 
-(ert-deftest alonso-client--tool-call-read-only-runs-immediately ()
-  :tags '(client)
-  (let ((alonso-pending-tools nil) (alonso-confirm-tools t) dispatched)
-    (cl-letf (((symbol-function 'alonso--show-tool-call) (lambda (&rest _) nil))
-              ((symbol-function 'alonso--dispatch-tool)
-               (lambda (name _input id) (setq dispatched (list name id)))))
-      (alonso--on-tool-call (alonso-client-tests--hash "id" "c1" "name" "read"
-                                                       "input" (make-hash-table))))
-    (should (and (equal '("read" "c1") dispatched)
-                 (= 1 (length alonso-pending-tools))))))
+;; A mutating tool (a `tool_confirm' event) is tracked as pending and queued
+;; for its individual confirmation (with confirmation enabled).
 
-(ert-deftest alonso-client--tool-call-read-only-error-reported-as-tool-result ()
-  :tags '(client)
-  (let ((alonso-pending-tools nil) (alonso-confirm-tools t) reported)
-    (cl-letf (((symbol-function 'alonso--show-tool-call) (lambda (&rest _) nil))
-              ((symbol-function 'alonso--dispatch-tool) (lambda (&rest _) (error "boom")))
-              ((symbol-function 'alonso--send-tool-result)
-               (lambda (id result status) (setq reported (list id result status)))))
-      (alonso--on-tool-call (alonso-client-tests--hash "id" "c1" "name" "read"
-                                                       "input" (make-hash-table))))
-    (should (equal '("c1" "boom" "error") reported))))
-
-(ert-deftest alonso-client--tool-call-with-confirm-disabled-runs-immediately ()
-  :tags '(client)
-  (let ((alonso-pending-tools nil) (alonso-confirm-tools nil) dispatched)
-    (cl-letf (((symbol-function 'alonso--show-tool-call) (lambda (&rest _) nil))
-              ((symbol-function 'alonso--dispatch-tool)
-               (lambda (name _input _id) (setq dispatched name))))
-      (alonso--on-tool-call (alonso-client-tests--hash "id" "c1" "name" "write"
-                                                       "input" (make-hash-table))))
-    (should (equal "write" dispatched))))
-
-(ert-deftest alonso-client--tool-call-mutating-is-queued-for-confirmation ()
+(ert-deftest alonso-client--tool-confirm-queued-for-confirmation ()
   :tags '(client)
   (let ((alonso-pending-tools nil) (alonso-confirm-tools t)
         (alonso--confirm-queue nil) scheduled)
     (cl-letf (((symbol-function 'alonso--schedule-confirm)
                (lambda () (setq scheduled t))))
-      (alonso--on-tool-call (alonso-client-tests--hash "id" "c1" "name" "write"
-                                                       "input" (make-hash-table))))
-    (should (and scheduled (= 1 (length alonso--confirm-queue))))))
+      (alonso--on-tool-confirm (alonso-client-tests--hash "id" "c1" "name" "write"
+                                                          "input" (make-hash-table))))
+    (should (and scheduled
+                 (= 1 (length alonso--confirm-queue))
+                 (= 1 (length alonso-pending-tools))))))
 
-;;; `alonso--send-tool-result' and `alonso--dispatch-tool'
+;; With confirmation disabled the `tool_confirm' is approved right away.
 
-(ert-deftest alonso-client--send-tool-result-sends-and-clears-pending ()
+(ert-deftest alonso-client--tool-confirm-disabled-approves-immediately ()
+  :tags '(client)
+  (let ((alonso-pending-tools nil) (alonso-confirm-tools nil) dispatched)
+    (cl-letf (((symbol-function 'alonso--show-tool-call) (lambda (&rest _) nil))
+              ((symbol-function 'alonso--dispatch-tool-guarded)
+               (lambda (name _input id) (setq dispatched (list name id)))))
+      (alonso--on-tool-confirm (alonso-client-tests--hash "id" "c1" "name" "write"
+                                                          "input" (make-hash-table))))
+    (should (equal '("write" "c1") dispatched))))
+
+;;; `alonso--send-tool-confirm' and `alonso--dispatch-tool'
+
+(ert-deftest alonso-client--send-tool-confirm-sends-and-clears-pending ()
   :tags '(client)
   (let ((alonso-process 'fake) sent
         (alonso-pending-tools (list (list :id "c1" :name "x" :input nil)))
@@ -687,299 +638,40 @@ returned and ARGS the arguments it received."
     (cl-letf (((symbol-function 'process-live-p) (lambda (_p) t))
               ((symbol-function 'alonso--send)
                (lambda (method params) (setq sent (cons method params)))))
-      (alonso--send-tool-result "c1" "out" "success"))
-    (should (and (equal "tool_result" (car sent))
+      (alonso--send-tool-confirm "c1"))
+    (should (and (equal "tool_confirm" (car sent))
                  (member "c1" (cdr sent))
                  (null alonso-pending-tools)
                  alonso--after-tool-separator-pending))))
 
-(ert-deftest alonso-client--send-tool-result-without-process-skips-the-send ()
+(ert-deftest alonso-client--send-tool-confirm-without-process-skips-the-send ()
   :tags '(client)
   (let ((alonso-process nil) (alonso-pending-tools nil) sent)
     (cl-letf (((symbol-function 'alonso--send) (lambda (&rest _) (setq sent t))))
-      (alonso--send-tool-result "c1" "out" "success"))
+      (alonso--send-tool-confirm "c1"))
     (should (null sent))))
 
-(ert-deftest alonso-client--dispatch-tool-shell-is-async ()
+;; `alonso--dispatch-tool' only asks the bridge to run the approved tool.
+
+(ert-deftest alonso-client--dispatch-tool-sends-approval ()
   :tags '(client)
-  (let (called)
-    (cl-letf (((symbol-function 'alonso--tool-shell-async)
-               (lambda (_input _id) (setq called "shell"))))
+  (let ((alonso-process 'fake) sent)
+    (cl-letf (((symbol-function 'process-live-p) (lambda (_p) t))
+              ((symbol-function 'alonso--send)
+               (lambda (method params) (setq sent (cons method params)))))
       (alonso--dispatch-tool "shell" (make-hash-table) "c1"))
-    (should (equal "shell" called))))
+    (should (and (equal "tool_confirm" (car sent))
+                 (member "c1" (cdr sent))))))
 
-(ert-deftest alonso-client--dispatch-tool-grep-is-async ()
-  :tags '(client)
-  (let (called)
-    (cl-letf (((symbol-function 'alonso--tool-grep-async)
-               (lambda (_input _id) (setq called "grep"))))
-      (alonso--dispatch-tool "grep" (make-hash-table) "c1"))
-    (should (equal "grep" called))))
+;; Tool subprocess handling was removed: the bridge runs the tools, so the
+;; client no longer spawns shell/grep processes or tracks their output.
+;;
 
-(ert-deftest alonso-client--dispatch-tool-default-runs-synchronously ()
-  :tags '(client)
-  (let (exec reported)
-    (cl-letf (((symbol-function 'alonso--execute-tool)
-               (lambda (name _input) (setq exec name) "res"))
-              ((symbol-function 'alonso--send-tool-result)
-               (lambda (id result status) (setq reported (list id result status)))))
-      (alonso--dispatch-tool "read" (make-hash-table) "c1"))
-    (should (and (equal "read" exec)
-                 (equal '("c1" "res" "success") reported)))))
-
-;;; Tool subprocess output filter and cancellation
-
-(ert-deftest alonso-client--tool-proc-filter-accumulates-output ()
-  :tags '(client)
-  (let ((proc (make-pipe-process :name "alonso-filter-proc" :noquery t)))
-    (unwind-protect
-        (progn
-          (alonso--tool-proc-filter proc "a")
-          (alonso--tool-proc-filter proc "b")
-          (should (equal "ab" (process-get proc :output))))
-      (delete-process proc))))
-
-(ert-deftest alonso-client--kill-tool-procs-kills-live-and-clears ()
-  :tags '(client)
-  (let* ((proc (make-pipe-process :name "alonso-kill-proc" :noquery t))
-         (alonso--tool-procs (list proc)))
-    (unwind-protect
-        (progn
-          (alonso--kill-tool-procs)
-          (should (and (process-get proc :cancelled)
-                       (null alonso--tool-procs)
-                       (not (process-live-p proc)))))
-      (ignore-errors (delete-process proc)))))
-
-;;; `alonso--tool-read' — errors and line slices
-
-(ert-deftest alonso-client--tool-read-errors-without-path ()
-  :tags '(client)
-  (should-error (alonso--tool-read (make-hash-table)) :type 'error))
-
-(ert-deftest alonso-client--tool-read-slice-with-offset-and-limit ()
-  :tags '(client)
-  (alonso-client-tests--with-temp-file f
-    (alonso--tool-write (alonso--json-plist-to-hash
-                         (list "path" f "content" "a\nb\nc\nd\n")))
-    (should (equal "b\nc"
-                   (alonso--tool-read
-                    (alonso--json-plist-to-hash
-                     (list "path" f "offset" 1 "limit" 2)))))))
-
-(ert-deftest alonso-client--tool-read-slice-with-offset-only ()
-  :tags '(client)
-  (alonso-client-tests--with-temp-file f
-    (alonso--tool-write (alonso--json-plist-to-hash
-                         (list "path" f "content" "a\nb\nc\nd\n")))
-    (should (equal "c\nd\n"
-                   (alonso--tool-read
-                    (alonso--json-plist-to-hash (list "path" f "offset" 2)))))))
-
-(ert-deftest alonso-client--tool-read-non-number-offset-defaults-to-zero ()
-  :tags '(client)
-  (alonso-client-tests--with-temp-file f
-    (alonso--tool-write (alonso--json-plist-to-hash
-                         (list "path" f "content" "a\nb\nc\nd\n")))
-    (should (equal "a"
-                   (alonso--tool-read
-                    (alonso--json-plist-to-hash
-                     (list "path" f "offset" "nope" "limit" 1)))))))
-
-(ert-deftest alonso-client--tool-read-non-number-limit-runs-to-end ()
-  :tags '(client)
-  (alonso-client-tests--with-temp-file f
-    (alonso--tool-write (alonso--json-plist-to-hash
-                         (list "path" f "content" "a\nb\nc\nd\n")))
-    (should (equal "b\nc\nd\n"
-                   (alonso--tool-read
-                    (alonso--json-plist-to-hash
-                     (list "path" f "offset" 1 "limit" "nope")))))))
-
-;;; `alonso--tool-write', `alonso--tool-glob' and `alonso--tool-search-replace'
-
-(ert-deftest alonso-client--tool-write-errors-without-content ()
-  :tags '(client)
-  (should-error (alonso--tool-write
-                 (alonso--json-plist-to-hash (list "path" "/tmp/alonso-x")))
-                :type 'error))
-
-(ert-deftest alonso-client--tool-glob-errors-without-pattern ()
-  :tags '(client)
-  (should-error (alonso--tool-glob (make-hash-table)) :type 'error))
-
-(ert-deftest alonso-client--search-replace-errors-with-missing-args ()
-  :tags '(client)
-  (should-error (alonso--tool-search-replace
-                 (alonso--json-plist-to-hash (list "path" "/tmp/alonso-x")))
-                :type 'error))
-
-(ert-deftest alonso-client--search-replace-errors-when-not-found ()
-  :tags '(client)
-  (alonso-client-tests--with-temp-file f
-    (alonso--tool-write (alonso--json-plist-to-hash
-                         (list "path" f "content" "hello\n")))
-    (should-error (alonso--tool-search-replace
-                   (alonso--json-plist-to-hash
-                    (list "path" f "search" "zzz" "replace" "y")))
-                  :type 'error)))
-
-;;; `alonso--execute-tool' dispatches to each synchronous tool
-
-(ert-deftest alonso-client--execute-tool-read ()
-  :tags '(client)
-  (alonso-client-tests--with-temp-file f
-    (alonso--tool-write (alonso--json-plist-to-hash (list "path" f "content" "hi")))
-    (should (equal "hi" (alonso--execute-tool
-                         "read" (alonso--json-plist-to-hash (list "path" f)))))))
-
-(ert-deftest alonso-client--execute-tool-write ()
-  :tags '(client)
-  (alonso-client-tests--with-temp-file f
-    (should (equal "ok"
-                   (alonso--execute-tool
-                    "write" (alonso--json-plist-to-hash
-                             (list "path" f "content" "x")))))))
-
-(ert-deftest alonso-client--execute-tool-glob ()
-  :tags '(client)
-  (alonso-client-tests--with-temp-file f
-    (should (string-match-p
-             (regexp-quote f)
-             (alonso--execute-tool
-              "glob" (alonso--json-plist-to-hash
-                      (list "pattern" (concat (file-name-directory f) "*.txt"))))))))
-
-(ert-deftest alonso-client--execute-tool-search-replace ()
-  :tags '(client)
-  (alonso-client-tests--with-temp-file f
-    (alonso--tool-write (alonso--json-plist-to-hash
-                         (list "path" f "content" "a b c")))
-    (should (equal "ok"
-                   (alonso--execute-tool
-                    "search_replace"
-                    (alonso--json-plist-to-hash
-                     (list "path" f "search" "b" "replace" "X")))))))
-
-(ert-deftest alonso-client--execute-tool-unknown-errors ()
-  :tags '(client)
-  (should-error (alonso--execute-tool "bogus" (make-hash-table)) :type 'error))
-
-;;; `alonso--tool-shell-async' — missing command, command and sentinel
-
-(ert-deftest alonso-client--tool-shell-async-errors-without-command ()
-  :tags '(client)
-  (should-error (alonso--tool-shell-async (make-hash-table) "c1") :type 'error))
-
-(ert-deftest alonso-client--tool-shell-async-runs-bash-with-the-command ()
-  :tags '(client)
-  (let ((alonso--tool-procs nil))
-    (let* ((res (alonso-client-tests--capture-process
-                 (lambda () (alonso--tool-shell-async
-                             (alonso-client-tests--hash "command" "echo hi") "c1"))))
-           (proc (car res)) (args (cdr res)))
-      (unwind-protect
-          (should (equal '("bash" "-c" "echo hi") (plist-get args :command)))
-        (delete-process proc)))))
-
-(ert-deftest alonso-client--tool-shell-async-sentinel-sends-output ()
-  :tags '(client)
-  (let ((alonso--tool-procs nil) reported)
-    (let* ((res (alonso-client-tests--capture-process
-                 (lambda () (alonso--tool-shell-async
-                             (alonso-client-tests--hash "command" "echo hi") "c1"))))
-           (proc (car res)) (args (cdr res))
-           (sentinel (plist-get args :sentinel)))
-      (unwind-protect
-          (progn
-            (process-put proc :output "hi\n")
-            (cl-letf (((symbol-function 'process-status) (lambda (_p) 'exit))
-                      ((symbol-function 'process-exit-status) (lambda (_p) 0))
-                      ((symbol-function 'alonso--send-tool-result)
-                       (lambda (id result status) (setq reported (list id result status)))))
-              (funcall sentinel proc "finished"))
-            (should (equal '("c1" "hi\n" "success") reported)))
-        (delete-process proc)))))
-
-(ert-deftest alonso-client--tool-shell-async-sentinel-reports-nonzero-status ()
-  :tags '(client)
-  (let ((alonso--tool-procs nil) reported)
-    (let* ((res (alonso-client-tests--capture-process
-                 (lambda () (alonso--tool-shell-async
-                             (alonso-client-tests--hash "command" "false") "c1"))))
-           (proc (car res)) (args (cdr res))
-           (sentinel (plist-get args :sentinel)))
-      (unwind-protect
-          (progn
-            (process-put proc :output "oops")
-            (cl-letf (((symbol-function 'process-status) (lambda (_p) 'exit))
-                      ((symbol-function 'process-exit-status) (lambda (_p) 3))
-                      ((symbol-function 'alonso--send-tool-result)
-                       (lambda (_id result _status) (setq reported result))))
-              (funcall sentinel proc "finished"))
-            (should (equal "oops\n[exited with status 3]" reported)))
-        (delete-process proc)))))
-
-(ert-deftest alonso-client--tool-shell-async-sentinel-skips-when-cancelled ()
-  :tags '(client)
-  (let ((alonso--tool-procs nil) reported)
-    (let* ((res (alonso-client-tests--capture-process
-                 (lambda () (alonso--tool-shell-async
-                             (alonso-client-tests--hash "command" "echo hi") "c1"))))
-           (proc (car res)) (args (cdr res))
-           (sentinel (plist-get args :sentinel)))
-      (unwind-protect
-          (progn
-            (process-put proc :cancelled t)
-            (cl-letf (((symbol-function 'process-status) (lambda (_p) 'exit))
-                      ((symbol-function 'alonso--send-tool-result)
-                       (lambda (&rest _) (setq reported t))))
-              (funcall sentinel proc "finished"))
-            (should (null reported)))
-        (delete-process proc)))))
-
-;;; `alonso--tool-grep-async' — missing pattern and the exit-status mapping
-
-(ert-deftest alonso-client--tool-grep-async-errors-without-pattern ()
-  :tags '(client)
-  (should-error (alonso--tool-grep-async (make-hash-table) "c1") :type 'error))
-
-(ert-deftest alonso-client--tool-grep-async-sentinel-status-1-is-success ()
-  :tags '(client)
-  (let ((alonso--tool-procs nil) reported)
-    (let* ((res (alonso-client-tests--capture-process
-                 (lambda () (alonso--tool-grep-async
-                             (alonso-client-tests--hash "pattern" "x") "c1"))))
-           (proc (car res)) (args (cdr res))
-           (sentinel (plist-get args :sentinel)))
-      (unwind-protect
-          (progn
-            (process-put proc :output "match\n")
-            (cl-letf (((symbol-function 'process-status) (lambda (_p) 'exit))
-                      ((symbol-function 'process-exit-status) (lambda (_p) 1))
-                      ((symbol-function 'alonso--send-tool-result)
-                       (lambda (id result status) (setq reported (list id result status)))))
-              (funcall sentinel proc "finished"))
-            (should (equal '("c1" "match\n" "success") reported)))
-        (delete-process proc)))))
-
-(ert-deftest alonso-client--tool-grep-async-sentinel-status-2-is-error ()
-  :tags '(client)
-  (let ((alonso--tool-procs nil) reported)
-    (let* ((res (alonso-client-tests--capture-process
-                 (lambda () (alonso--tool-grep-async
-                             (alonso-client-tests--hash "pattern" "x") "c1"))))
-           (proc (car res)) (args (cdr res))
-           (sentinel (plist-get args :sentinel)))
-      (unwind-protect
-          (progn
-            (cl-letf (((symbol-function 'process-status) (lambda (_p) 'exit))
-                      ((symbol-function 'process-exit-status) (lambda (_p) 2))
-                      ((symbol-function 'alonso--send-tool-result)
-                       (lambda (id result status) (setq reported (list id result status)))))
-              (funcall sentinel proc "finished"))
-            (should (equal '("c1" "" "error") reported)))
-        (delete-process proc)))))
+;;; (Local tool execution tests removed)
+;;
+;; read/write/glob/search_replace are implemented and executed by the bridge
+;; now; the client no longer has `alonso--tool-read'/`--tool-write'/`--tool-glob'/
+;; `--tool-search-replace'/`--execute-tool', so their tests were removed.
 
 ;;; `alonso--resolve-command' and the provider startup flag
 
@@ -1072,16 +764,17 @@ returned and ARGS the arguments it received."
               ((symbol-function 'process-live-p) (lambda (_p) nil)))
       (should-error (alonso--ensure-ready) :type 'error))))
 
-;;; `alonso--dispatch-tool-guarded' reports execution errors
+;;; `alonso--dispatch-tool-guarded' approves the tool
 
-(ert-deftest alonso-client--dispatch-tool-guarded-reports-errors ()
+(ert-deftest alonso-client--dispatch-tool-guarded-approves ()
   :tags '(client)
-  (let (reported)
-    (cl-letf (((symbol-function 'alonso--dispatch-tool) (lambda (&rest _) (error "nope")))
-              ((symbol-function 'alonso--send-tool-result)
-               (lambda (id result status) (setq reported (list id result status)))))
+  (let ((alonso-process 'fake) sent)
+    (cl-letf (((symbol-function 'process-live-p) (lambda (_p) t))
+              ((symbol-function 'alonso--send)
+               (lambda (method params) (setq sent (cons method params)))))
       (alonso--dispatch-tool-guarded "read" (make-hash-table) "c1"))
-    (should (equal '("c1" "nope" "error") reported))))
+    (should (and (equal "tool_confirm" (car sent))
+                 (member "c1" (cdr sent))))))
 
 ;;; `alonso--trust-record' — recording replaces a previous entry
 

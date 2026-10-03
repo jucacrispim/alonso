@@ -72,7 +72,6 @@
               ;; the bridge is running.
               (alonso-process (make-symbol "fake-bridge-proc"))
               ((symbol-function 'process-live-p) (lambda (_p) t))
-              (alonso--tool-procs nil)
               (alonso--trust-specific nil)
               (alonso--trust-class nil)
               (alonso--trust-all nil))

@@ -22,8 +22,12 @@
 ;; The "client" half of the Emacs llm-bridge integration.  It owns the JSON
 ;; protocol (serializing the commands sent to the bridge and parsing the
 ;; events it emits), the subprocess lifecycle (spawning, line filtering,
-;; handshake) and the implementation of the tools (read, write, glob,
-;; search_replace, shell, grep) plus the trust-scope decision logic.
+;; handshake), the handling of tool calls (display, approval and the
+;; trust-scope decision logic) and the per-request overrides.
+;;
+;; The tools themselves are executed by the bridge, not here: read-only tools
+;; run inline in the bridge, and mutating tools run once the client approves
+;; them (a `tool_confirm' command).  The client never runs a tool.
 ;;
 ;; It deliberately knows nothing about buffers/windows: every event it
 ;; dispatches is handed to a rendering handler living in
@@ -179,14 +183,11 @@ must be treated as a deny so the turn does not hang waiting forever.")
 (defvar alonso-line-buffer ""
   "Partial JSON line buffer while assembling multi-chunk reads.")
 
-(defvar alonso--tool-procs nil
-  "List of active tool subprocesses (shell/grep), cleaned up on kill.")
-
 (defvar alonso--after-tool-separator-pending nil
-  "Non-nil when a tool call/result was just displayed in the current turn.
+  "Non-nil when a tool call was just displayed in the current turn.
 The next model output (thinking or chunk) still needs the two blank lines
 separating it from the tool's output.  Set by
-`alonso--send-tool-result', consumed by the first `thinking'
+`alonso--send-tool-confirm', consumed by the first `thinking'
 or `chunk' that follows, and cleared at the start/end of every turn.")
 
 (defvar alonso-session-input-tokens 0
@@ -443,6 +444,7 @@ PARAMS is a flat plist of alternating keys/values, e.g. (\"text\" \"oi\")."
           (chunk        (alonso--on-chunk (gethash "text" ev)))
           (thinking     (alonso--on-thinking (gethash "text" ev)))
           (tool_call    (alonso--on-tool-call ev))
+          (tool_confirm (alonso--on-tool-confirm ev))
           (turn_end     (alonso--on-turn-end ev))
           (files_changed (alonso--on-files-changed ev))
           (usage_delta  (alonso--on-usage-delta ev))
@@ -454,221 +456,75 @@ PARAMS is a flat plist of alternating keys/values, e.g. (\"text\" \"oi\")."
 ;;; Tool-calling loop
 
 (defun alonso--on-tool-call (ev)
-  "Handle a `tool_call' event EV.
-Read-only tools are shown and execute right away.  Mutating tools are only
-queued (not shown yet): each one is displayed and asked for its individual
-confirmation inside `alonso--confirm-pending', one at a time — only
-the tool being asked about appears on screen, and the next one appears only
-after the previous one has been answered."
+  "Handle a `tool_call' event EV: a read-only tool the bridge already ran.
+
+Read-only tools (read/grep/glob/knowledge) are executed by the bridge itself
+in the same turn, so a `tool_call' needs no action from the client — it is
+only displayed.  Mutating tools (shell/write/search_replace) arrive as
+`tool_confirm' events instead (see `alonso--on-tool-confirm')."
   (let ((id (gethash "id" ev))
         (name (gethash "name" ev))
         (input (gethash "input" ev)))
-    (if (equal name "knowledge")
-        ;; The `knowledge' tool is resolved INTERNALLY by the bridge
-        ;; (fire-and-forget): it never waits for a tool_result, so we only
-        ;; surface it as an informational line and send nothing back —
-        ;; confirming/running it here would error and a late tool_result would
-        ;; just be ignored by the bridge.  Crucially, it is NOT added to
-        ;; `alonso-pending-tools': nothing would ever remove that entry
-        ;; (no tool_result is ever sent for it), and a leftover entry would make
-        ;; every following `prompt' be rejected as \"turn in progress\".
-        (alonso--show-tool-call id name input)
-      ;; Every other tool is tracked in `alonso-pending-tools' (its
-      ;; entry is removed by `alonso--send-tool-result' once the tool
-      ;; reports back).
-      (push (list :id id :name name :input input) alonso-pending-tools)
-      (if (or (alonso--tool-read-only-p name)
-              (not alonso-confirm-tools))
-        (progn
-          ;; read-only (or confirmation disabled): show and run right away
-          (alonso--show-tool-call id name input)
-          (condition-case err
-              (alonso--dispatch-tool name input id)
-            (error
-             (alonso--send-tool-result
-              id (error-message-string err) "error"))))
-      ;; mutating: queue it and schedule its (individual) confirmation.  It is
-      ;; shown one at a time in `--confirm-pending', not here.
-      (push (list :id id :name name :input input) alonso--confirm-queue)
-      (alonso--schedule-confirm)))))
+    (alonso--show-tool-call id name input)))
 
-(defun alonso--send-tool-result (id result status)
-  "Send a tool_result for ID with RESULT and STATUS."
+(defun alonso--on-tool-confirm (ev)
+  "Handle a `tool_confirm' event EV: a mutating tool to approve.
+
+The bridge offers the tool for approval; the client confirms it (or applies
+trust) and answers by sending a `tool_confirm' command, upon which the bridge
+executes the tool itself.  With confirmation disabled the tool is approved
+right away.  The tool is tracked in `alonso-pending-tools' until the client
+answers (removed when approved, or via `cancel' when denied)."
+  (let ((id (gethash "id" ev))
+        (name (gethash "name" ev))
+        (input (gethash "input" ev)))
+    (push (list :id id :name name :input input) alonso-pending-tools)
+    (if (not alonso-confirm-tools)
+        (progn
+          ;; confirmation disabled: show and approve right away
+          (alonso--show-tool-call id name input)
+          (alonso--dispatch-tool-guarded name input id))
+      ;; queue it and schedule its (individual) confirmation.  It is shown one
+      ;; at a time in `--confirm-pending', not here.
+      (push (list :id id :name name :input input) alonso--confirm-queue)
+      (alonso--schedule-confirm))))
+
+(defun alonso--send-tool-confirm (id)
+  "Ask the bridge to execute the approved tool call ID.
+
+The bridge is the sole executor — the client never runs tools anymore; this
+only sends the approval.  The tool is removed from `alonso-pending-tools' and
+the separator flag is set so the next model output is separated from the tool
+by two blank lines."
   (when (and alonso-process (process-live-p alonso-process))
-    (alonso--send "tool_result"
-                          (list "id" id "result" result "status" status)))
+    (alonso--send "tool_confirm" (list "id" id)))
   (setq alonso-pending-tools
         (cl-remove-if (lambda (tc) (equal (plist-get tc :id) id))
                       alonso-pending-tools))
-  ;; The tool output finished: the next thinking/chunk of the model must
-  ;; be separated from it by two blank lines.
   (setq alonso--after-tool-separator-pending t))
 
-(defun alonso--dispatch-tool (name input id)
-  "Dispatch tool NAME with INPUT and ID for execution.
-`shell' and `grep' run asynchronously via `make-process'; the remaining tools
-execute synchronously (they are fast file operations)."
-  (cl-case (intern name)
-    (shell (alonso--tool-shell-async input id))
-    (grep  (alonso--tool-grep-async input id))
-    (t (alonso--send-tool-result
-        id (alonso--execute-tool name input) "success"))))
+(defun alonso--dispatch-tool (_name _input id)
+  "Approve tool call ID, asking the bridge to run it.
 
-;;; Implementation of the 6 tools
+NAME and INPUT are unused (kept so the confirmation/trust call sites, which
+pass them, stay unchanged); only the id matters, since the bridge already
+holds the pending tool call."
+  (alonso--send-tool-confirm id))
+
+;;; Tool-call argument helpers
 
 (defun alonso--hval (input key)
   "Get KEY from INPUT (a hash-table parsed from JSON), or nil."
   (when (hash-table-p input)
     (gethash key input)))
 
-(defun alonso--tool-proc-filter (proc out)
-  "Accumulate OUT from a tool subprocess PROC into its :output property."
-  (process-put proc :output (concat (process-get proc :output) out)))
-
-(defun alonso--tool-read (input)
-  "Tool `read': return the contents of the file at PATH.
-INPUT is the tool-call arguments hash table with PATH and, optionally,
-OFFSET (0-based line index) and LIMIT (max number of lines).  When either
-is given, return only that slice of the file (lines from OFFSET, up to
-LIMIT lines); otherwise return the whole file."
-  (let ((path (alonso--hval input "path")))
-    (unless path (error "Read: missing 'path'"))
-    (with-temp-buffer
-      (insert-file-contents (expand-file-name path))
-      (let* ((lines (split-string (buffer-string) "\n"))
-             (offset (alonso--hval input "offset"))
-             (limit (alonso--hval input "limit")))
-        (if (and (null offset) (null limit))
-            (buffer-string)
-          (let* ((nlines (length lines))
-                 (start (min nlines (if (numberp offset) (max 0 offset) 0)))
-                 (end (if (numberp limit)
-                          (min nlines (+ start limit))
-                        nlines)))
-            (mapconcat #'identity (cl-subseq lines start end) "\n")))))))
-
-(defun alonso--tool-write (input)
-  "Tool `write': write CONTENT to the file at PATH.
-INPUT is the tool-call arguments hash table with PATH and CONTENT."
-  (let ((path (alonso--hval input "path"))
-        (content (alonso--hval input "content")))
-    (unless (and path content) (error "Write: missing 'path' or 'content'"))
-    (with-temp-buffer
-      (insert content)
-      (write-region (point-min) (point-max) (expand-file-name path) nil 'quiet))
-    "ok"))
-
-(defun alonso--tool-shell-async (input id)
-  "Run the `shell' tool COMMAND asynchronously via bash -c.
-INPUT is the tool-call arguments hash table (with COMMAND) and ID is the
-tool-call id echoed back in the tool_result.  Sends the tool_result when the
-process exits."
-  (let ((command (alonso--hval input "command")))
-    (unless command (error "Shell: missing 'command'"))
-    (let ((proc (make-process
-                 :name (format "llm-bridge-shell-%s" id)
-                 :buffer nil
-                 :command (list "bash" "-c" command)
-                 :connection-type 'pipe
-                 :filter #'alonso--tool-proc-filter
-                 :sentinel (lambda (proc _event)
-                             (setq alonso--tool-procs
-                                   (delq proc alonso--tool-procs))
-                             (when (and (memq (process-status proc) '(exit signal))
-                                        (not (process-get proc :cancelled)))
-                               (let* ((status (process-exit-status proc))
-                                      (out (or (process-get proc :output) "")))
-                                 (alonso--send-tool-result
-                                  id
-                                  (concat out (when (/= status 0)
-                                                (format "\n[exited with status %d]" status)))
-                                  "success")))))))
-      (push proc alonso--tool-procs))))
-
-(defun alonso--tool-grep-async (input id)
-  "Run the `grep' tool PATTERN under PATH asynchronously.
-INPUT is the tool-call arguments hash table (with PATTERN and PATH) and ID
-is the tool-call id echoed back in the tool_result.  The pattern is a POSIX
-extended regular expression (like `grep -E'), so a literal string must have
-its regex metacharacters escaped; output is one `file:line:text' entry per
-match.  Sends the tool_result when the process exits (0 = matches, 1 = no
-matches)."
-  (let ((pattern (alonso--hval input "pattern"))
-        (path (or (alonso--hval input "path") ".")))
-    (unless pattern (error "Grep: missing 'pattern'"))
-    (let ((proc (make-process
-                 :name (format "llm-bridge-grep-%s" id)
-                 :buffer nil
-                 :command (list "grep" "-rnEI" "--include=*" pattern (expand-file-name path))
-                 :connection-type 'pipe
-                 :filter #'alonso--tool-proc-filter
-                 :sentinel (lambda (proc _event)
-                             (setq alonso--tool-procs
-                                   (delq proc alonso--tool-procs))
-                             (when (and (memq (process-status proc) '(exit signal))
-                                        (not (process-get proc :cancelled)))
-                               (let* ((status (process-exit-status proc))
-                                      (out (or (process-get proc :output) "")))
-                                 (alonso--send-tool-result
-                                  id out (if (<= status 1) "success" "error"))))))))
-      (push proc alonso--tool-procs))))
-
-(defun alonso--kill-tool-procs ()
-  "Kill any in-flight asynchronous tool processes (shell/grep).
-
-Called when a turn is cancelled so a long-running command stops instead of
-keeping running after the turn ended, and so its late tool_result is never
-sent (the bridge no longer waits for it).  Each process is marked
-`:cancelled' before being killed so its sentinel skips sending a
-tool_result."
-  (dolist (proc alonso--tool-procs)
-    (when (process-live-p proc)
-      (process-put proc :cancelled t)
-      (delete-process proc)))
-  (setq alonso--tool-procs nil))
-
-(defun alonso--tool-glob (input)
-  "Tool `glob': find files matching PATTERN under PATH.
-INPUT is the tool-call arguments hash table with PATTERN and PATH."
-  (let ((pattern (alonso--hval input "pattern"))
-        (base (or (alonso--hval input "path") default-directory)))
-    (unless pattern (error "Glob: missing 'pattern'"))
-    (let ((default-directory (expand-file-name base)))
-      (mapconcat #'identity (file-expand-wildcards pattern) "\n"))))
-
-(defun alonso--tool-search-replace (input)
-  "Tool `search_replace': replace the first exact SEARCH in PATH with REPLACE.
-INPUT is the tool-call arguments hash table with PATH, SEARCH and REPLACE."
-  (let ((path (alonso--hval input "path"))
-        (search (alonso--hval input "search"))
-        (replace (alonso--hval input "replace")))
-    (unless (and path search replace)
-      (error "Search_replace: missing 'path', 'search' or 'replace'"))
-    (let* ((full (expand-file-name path))
-           (content (with-temp-buffer
-                      (insert-file-contents full)
-                      (buffer-string)))
-           (pos (string-match (regexp-quote search) content)))
-      (unless pos
-        (error "string %S not found in %s" search path))
-      (let ((new (concat (substring content 0 pos)
-                         replace
-                         (substring content (+ pos (length search))))))
-        (with-temp-buffer
-          (insert new)
-          (write-region (point-min) (point-max) full nil 'quiet)))
-      "ok")))
-
-(defun alonso--execute-tool (name input)
-  "Execute tool NAME with INPUT synchronously, returning the result string.
-Only the fast file tools run here; `shell' and `grep' are dispatched
-asynchronously by `alonso--dispatch-tool'."
-  (cl-case (intern name)
-    (read           (alonso--tool-read input))
-    (write          (alonso--tool-write input))
-    (glob           (alonso--tool-glob input))
-    (search_replace (alonso--tool-search-replace input))
-    (t (error "Unknown tool: %s" name))))
+;;; Tool execution lives in the bridge (llm-bridge), not in the client.
+;;
+;; The tools (read/write/shell/grep/glob/search_replace) are now implemented in
+;; Go inside llm-bridge and executed there: read-only tools run inline, and
+;; mutating ones run once the client approves them (via `tool_confirm').  The
+;; client only displays tool calls and answers the bridge's confirmations, so
+;; the local tool implementations that used to live here were removed.
 
 (defun alonso--resolve-command (cmd)
   "Resolve the bridge command CMD for `make-process'.
@@ -753,13 +609,10 @@ Raises an error if the process dies or the handshake times out (10s)."
   (memq (intern name) '(read grep glob knowledge)))
 
 (defun alonso--dispatch-tool-guarded (name input id)
-  "Dispatch tool NAME with INPUT and ID, reporting any error as a tool_result.
-Wraps `alonso--dispatch-tool' so an execution error is sent back to
-the bridge instead of interrupting the client."
-  (condition-case err
-      (alonso--dispatch-tool name input id)
-    (error
-     (alonso--send-tool-result id (error-message-string err) "error"))))
+  "Approve tool NAME with INPUT and ID, asking the bridge to run it.
+`alonso--dispatch-tool' only sends the approval (the bridge executes the
+tool), so there is no local execution error to report."
+  (alonso--dispatch-tool name input id))
 
 (defun alonso--trust-class-key (name input)
   "Return the class key for tool NAME with INPUT, or nil when no class.

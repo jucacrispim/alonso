@@ -498,13 +498,13 @@ right — the `alonso-open' layout — and makes the pair atomic."
 ;;; Tool → model: two blank lines between the tool output and the model's
 ;;; next thinking/response
 
-(ert-deftest alonso-ui--tool-result-marks-pending-separator ()
+(ert-deftest alonso-ui--tool-confirm-marks-pending-separator ()
   :tags '(ui)
   (setq alonso--after-tool-separator-pending nil)
   (alonso--show-tool-call
    "call_1" "read"
    (alonso--json-plist-to-hash (list "path" "/tmp/x.txt")))
-  (alonso--send-tool-result "call_1" "content" "success")
+  (alonso--send-tool-confirm "call_1")
   (should alonso--after-tool-separator-pending))
 
 (ert-deftest alonso-ui--thinking-consumes-tool-separator ()
@@ -514,7 +514,7 @@ right — the `alonso-open' layout — and makes the pair atomic."
     (alonso--show-tool-call
      "call_1" "read"
      (alonso--json-plist-to-hash (list "path" "/tmp/x.txt")))
-    (alonso--send-tool-result "call_1" "content" "success")
+    (alonso--send-tool-confirm "call_1")
     (alonso--on-thinking "post-tool reasoning")
     (should (not alonso--after-tool-separator-pending))))
 
@@ -526,7 +526,7 @@ right — the `alonso-open' layout — and makes the pair atomic."
       (alonso--show-tool-call
        "call_1" "read"
        (alonso--json-plist-to-hash (list "path" "/tmp/x.txt")))
-      (alonso--send-tool-result "call_1" "content" "success")
+      (alonso--send-tool-confirm "call_1")
       (alonso--on-thinking "post-tool reasoning")
       (alonso--on-chunk "post-tool response")
       (should (equal "\n📄 read\n  path:\n    /tmp/x.txt\n\n\npost-tool reasoning\n\n\npost-tool response"
@@ -539,7 +539,7 @@ right — the `alonso-open' layout — and makes the pair atomic."
     (alonso--show-tool-call
      "call_2" "glob"
      (alonso--json-plist-to-hash (list "pattern" "*.el")))
-    (alonso--send-tool-result "call_2" "a.el" "success")
+    (alonso--send-tool-confirm "call_2")
     (alonso--on-chunk "direct post-tool response")
     (alonso--on-chunk " continues")
     (should (equal "\n🔎 glob\n  pattern:\n    *.el\n\n\ndirect post-tool response continues"
@@ -1725,17 +1725,22 @@ Call FN with LEFT; clean up afterwards."
       (alonso-prompt "oi"))
     (should (equal "oi" sent))))
 
-(ert-deftest alonso-ui--cancel-kills-live-tool-procs ()
+(ert-deftest alonso-ui--cancel-without-process-sends-nothing ()
   :tags '(ui)
-  (let* ((proc (make-pipe-process :name "alonso-cancel-proc" :noquery t))
-         (alonso--tool-procs (list proc))
-         (alonso-process nil))
-    (unwind-protect
-        (progn
-          (alonso-cancel)
-          (should (and (null alonso--tool-procs)
-                       (not (process-live-p proc)))))
-      (ignore-errors (delete-process proc)))))
+  (let ((alonso-process nil) sent)
+    (cl-letf (((symbol-function 'alonso--send)
+               (lambda (&rest _) (setq sent t))))
+      (alonso-cancel))
+    (should (null sent))))
+
+(ert-deftest alonso-ui--cancel-sends-cancel-without-tool-procs ()
+  :tags '(ui)
+  (let ((alonso-process 'fake) sent)
+    (cl-letf (((symbol-function 'process-live-p) (lambda (_p) t))
+              ((symbol-function 'alonso--send)
+               (lambda (method &optional _params) (setq sent method))))
+      (alonso-cancel))
+    (should (equal "cancel" sent))))
 
 (ert-deftest alonso-ui--set-cwd-sends-expanded-dir ()
   :tags '(ui)
@@ -1879,18 +1884,9 @@ Call FN with LEFT; clean up afterwards."
       (alonso-kill))
     (should (and (equal "quit" sent) deleted))))
 
-(ert-deftest alonso-ui--kill-deletes-live-tool-procs ()
-  :tags '(ui)
-  (let ((proc (make-pipe-process :name "alonso-kill-proc2" :noquery t))
-        (alonso--tool-procs nil) (alonso-process nil) deleted)
-    (setq alonso--tool-procs (list proc))
-    (unwind-protect
-        (progn
-          (cl-letf (((symbol-function 'alonso--cancel-confirm) (lambda ()))
-                    ((symbol-function 'delete-process) (lambda (_p) (setq deleted t))))
-            (alonso-kill))
-          (should deleted))
-      (ignore-errors (delete-process proc)))))
+;; (The kill-deletes-tool-procs test was removed: the client no longer spawns
+;; tool subprocesses; the bridge runs the tools.)
+
 
 ;;; `alonso-restart'
 

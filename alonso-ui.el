@@ -1291,15 +1291,10 @@ the input are then bound together as a single atomic window (see
 
 ;;;###autoload
 (defun alonso-cancel ()
-  "Cancel the current in-flight turn and stop any running tool command."
+  "Cancel the current in-flight turn."
   (interactive)
-  ;; Stop any asynchronous tool command (shell/grep) still running: otherwise
-  ;; it would keep running after the turn is cancelled and send a late
-  ;; tool_result the bridge no longer expects.
-  (dolist (p alonso--tool-procs)
-    (when (process-live-p p)
-      (delete-process p)))
-  (setq alonso--tool-procs nil)
+  ;; The bridge executes the tools itself, so cancelling the turn (which also
+  ;; interrupts any command the bridge is running) is all that is needed.
   (when (and alonso-process (process-live-p alonso-process))
     (alonso--send "cancel")))
 
@@ -1396,7 +1391,7 @@ just to its left)."
 
 ;;;###autoload
 (defun alonso-kill ()
-  "Terminate the bridge, kill any running tool processes and clean state."
+  "Terminate the bridge and clean state."
   (interactive)
   (alonso--cancel-confirm)
   (when (and alonso-process (process-live-p alonso-process))
@@ -1405,10 +1400,6 @@ just to its left)."
     ;; the sentinel may have already cleared the process; only delete if alive
     (when (and alonso-process (process-live-p alonso-process))
       (delete-process alonso-process)))
-  (dolist (p alonso--tool-procs)
-    (when (process-live-p p)
-      (delete-process p)))
-  (setq alonso--tool-procs nil)
   (setq alonso-process nil
         alonso-ready nil
         alonso-in-turn nil
