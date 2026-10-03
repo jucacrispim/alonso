@@ -532,6 +532,33 @@ right — the `alonso-open' layout — and makes the pair atomic."
       (should (equal "\n📄 read\n  path:\n    /tmp/x.txt\n\n\npost-tool reasoning\n\n\npost-tool response"
                      (alonso-ui-tests--conversation-text-from start))))))
 
+(ert-deftest alonso-ui--read-only-tool-marks-pending-separator ()
+  :tags '(ui)
+  (alonso-ui-tests--reset-conversation-state)
+  (let ((ev (make-hash-table :test 'equal)))
+    (puthash "event" "tool_call" ev)
+    (puthash "id" "call_1" ev)
+    (puthash "name" "read" ev)
+    (puthash "input" (alonso--json-plist-to-hash (list "path" "/tmp/x.txt")) ev)
+    (alonso--on-tool-call ev))
+  (should alonso--after-tool-separator-pending))
+
+(ert-deftest alonso-ui--two-blank-lines-between-read-only-tool-and-thinking ()
+  :tags '(ui)
+  (let ((alonso-show-thinking t))
+    (alonso-ui-tests--reset-conversation-state)
+    (let ((start (with-current-buffer (alonso--get-buffer) (point-max))))
+      (let ((ev (make-hash-table :test 'equal)))
+        (puthash "event" "tool_call" ev)
+        (puthash "id" "call_1" ev)
+        (puthash "name" "read" ev)
+        (puthash "input" (alonso--json-plist-to-hash (list "path" "/tmp/x.txt")) ev)
+        (alonso--on-tool-call ev))
+      (alonso--on-thinking "post-tool reasoning")
+      (alonso--on-chunk "post-tool response")
+      (should (equal "\n📄 read\n  path:\n    /tmp/x.txt\n\n\npost-tool reasoning\n\n\npost-tool response"
+                     (alonso-ui-tests--conversation-text-from start))))))
+
 (ert-deftest alonso-ui--tool-to-response-separator-appears-once ()
   :tags '(ui)
   (alonso-ui-tests--reset-conversation-state)

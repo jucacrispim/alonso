@@ -465,7 +465,12 @@ only displayed.  Mutating tools (shell/write/search_replace) arrive as
   (let ((id (gethash "id" ev))
         (name (gethash "name" ev))
         (input (gethash "input" ev)))
-    (alonso--show-tool-call id name input)))
+    (alonso--show-tool-call id name input)
+    ;; Mark the pending separator so the model's next output (thinking or
+    ;; response) is separated from the tool display by two blank lines —
+    ;; same as the mutating path does in `alonso--send-tool-confirm'.  The
+    ;; flag is cleared on the first resumed output and at `turn_end'.
+    (setq alonso--after-tool-separator-pending t)))
 
 (defun alonso--on-tool-confirm (ev)
   "Handle a `tool_confirm' event EV: a mutating tool to approve.
