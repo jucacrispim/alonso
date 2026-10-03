@@ -27,8 +27,10 @@
 
 ;; Emacs client for llm-bridge, a long-running Go process that bridges an
 ;; editor and the DeepSeek LLM over JSON lines (stdin/stdout).  This package
-;; starts the bridge as a subprocess, reads its events asynchronously, displays
-;; the conversation in a dedicated buffer and executes the tools locally.
+;; starts the bridge as a subprocess, reads its events asynchronously and
+;; displays the conversation in a dedicated buffer.  The bridge executes the
+;; tool calls — read-only ones run inline and are just displayed; mutating ones
+;; ask for the user's approval before running.
 ;;
 ;; The bridge protocol is documented in
 ;; ~/mysrc/llm-bridge/docs/source/.

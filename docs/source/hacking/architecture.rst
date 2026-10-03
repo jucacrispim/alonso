@@ -14,12 +14,14 @@ The dependency is strictly one-way::
 
 * **``alonso-client.el``** — the "client": the JSON protocol (serializing the
   commands sent to the bridge and parsing the events it emits), the subprocess
-  lifecycle (spawning, line filtering, handshake) and the implementation of the
-  tools (``read``, ``write``, ``glob``, ``search_replace``, ``shell``,
-  ``grep``) plus the trust-scope decision logic.  It knows nothing about
-  buffers/windows; every event it dispatches is handed to a rendering handler
-  living in ``alonso-ui.el``, reached via ``declare-function`` (only called at
-  runtime, never at load time).
+  lifecycle (spawning, line filtering, handshake) and the tool-call protocol
+  side: it approves the mutating tools the bridge asks to run (sending the
+  ``tool_confirm`` command) while the read-only ones — which the bridge runs
+  inline — are merely displayed — plus the trust-scope decision logic.  It does
+  not implement any tool itself; the bridge executes them all.  It knows nothing
+  about buffers/windows; every event it dispatches is handed to a rendering
+  handler living in ``alonso-ui.el``, reached via ``declare-function`` (only
+  called at runtime, never at load time).
 
 * **``alonso-ui.el``** — the "UI shell": the conversation and input buffers,
   their minor modes and keymaps, the insertion helpers the renderers build on,

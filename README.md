@@ -3,8 +3,9 @@
 Emacs client for [llm-bridge](https://github.com/poraodojuca/llm-bridge) — a
 long-running Go process that bridges the editor and the LLM over JSON lines
 (stdin/stdout).  alonso starts the bridge as a subprocess, reads its events
-asynchronously, displays the conversation in a dedicated buffer and executes
-the tools locally.
+asynchronously and displays the conversation in a dedicated buffer.  The bridge
+executes the tool calls — read-only ones run inline and are just displayed;
+mutating ones ask for the user's approval before running.
 
 ## Requirements
 

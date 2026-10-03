@@ -88,6 +88,14 @@ property.
 Tool calls
 ----------
 
+The bridge executes every tool call.  Read-only tools (``read``, ``grep``,
+``glob``, ``knowledge``) run without confirmation: the bridge emits a
+``tool_call`` event and alonso just displays it in the conversation.  Mutating
+tools (``write``, ``search_replace``, ``shell``) need the user's approval: the
+bridge emits a ``tool_confirm`` event with the tool's name and parameters, and
+alonso asks for a decision (approving sends the ``tool_confirm`` command;
+denying is a ``cancel``).
+
 Mutating tool calls show their confirmation question right away, one at a time
 — the tool's icon and the ``Run tool: <name>?`` prompt, e.g.
 ``🖥 Run tool: shell?``, followed by the parameters beneath it.  Once the user
