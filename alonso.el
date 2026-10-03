@@ -3,7 +3,7 @@
 ;; Copyright (C) 2026 Juca Crispim <juca@poraodojuca.dev>
 
 ;; Author: Juca Crispim <juca@poraodojuca.dev>
-;; Version: 0.1.0
+;; Version: 0.2.0
 ;; Package-Requires: ((emacs "27.1") (transient "0.4.0"))
 ;; Keywords: tools, convenience
 ;; URL: https://github.com/poraodojuca/alonso

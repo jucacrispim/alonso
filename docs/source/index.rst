@@ -23,6 +23,11 @@ once, in a single protocol, and renders the result in Emacs.
 
    hacking/index
 
+.. toctree::
+   :maxdepth: 2
+
+   changelog
+
 Indices and tables
 ------------------
 
