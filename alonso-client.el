@@ -67,6 +67,64 @@
   :type 'string
   :group 'alonso)
 
+(defcustom alonso-sandbox-command ""
+  "Sandbox command used to wrap the bridge at launch.
+Empty (the default) starts the bridge directly, without a sandbox.  When
+non-empty, the bridge is launched as:
+
+  SANDBOX [--ro DIR]... [--rw DIR]... -- BRIDGE <bridge-args>
+
+where SANDBOX is this command (e.g. \"caged\", see the alonso-cage project)
+and the dirs come from `alonso-sandbox-ro-paths' / `alonso-sandbox-rw-paths'."
+  :type 'string
+  :group 'alonso)
+
+(defcustom alonso-sandbox-ro-paths '("/usr" "/bin" "/lib" "/etc")
+  "Directories given read access inside the sandbox (one `--ro' each).
+They are passed to `alonso-sandbox-command' after expansion of a leading ~."
+  :type '(repeat directory)
+  :group 'alonso)
+
+(defcustom alonso-sandbox-rw-paths '("~/.cache/llm-bridge"
+                                     "~/.llm-bridge" "~/.local/share/llm-bridge"
+                                     "/dev/null" "/dev/urandom")
+  "Directories given read/write access inside the sandbox (one `--rw' each).
+They are passed to `alonso-sandbox-command' after expansion of a leading ~.
+The default covers the llm-bridge KB/cache, its per-project context
+directory and the shared knowledge-base data.
+
+Two `/dev' devices are included on top of the directory tree:
+
+`/dev/null' is needed because the bridge, when it spawns the tools
+\(shell/grep), lets the Go runtime open `/dev/null' for the child's stdin
+\(`os/exec' does `open(\"/dev/null\", O_RDWR)' when no stdin is set); the
+sandbox denies it otherwise and the spawn fails with `permission denied'.
+
+`/dev/urandom' is needed because tools the bridge spawns that create
+temporary files or tokens (e.g. git's `mkstemp' when writing objects, TLS)
+read random bytes from it; without access, such tools fail (git, for
+instance, dies with `unable to get random bytes for temporary file').
+
+These are the two individual devices, not the whole /dev tree."
+  :type '(repeat directory)
+  :group 'alonso)
+
+(defcustom alonso-sandbox-extra-ro-paths nil
+  "Extra directories given read access inside the sandbox (one `--ro' each).
+Appended to `alonso-sandbox-ro-paths' when building the sandbox args, so it
+can be set on its own (e.g. in your init file) without redefining the base
+list.  Passed to `alonso-sandbox-command' after expansion of a leading ~."
+  :type '(repeat directory)
+  :group 'alonso)
+
+(defcustom alonso-sandbox-extra-rw-paths nil
+  "Extra directories given read/write access inside the sandbox (one `--rw' each).
+Appended to `alonso-sandbox-rw-paths' when building the sandbox args, so it
+can be set on its own (e.g. in your init file) without redefining the base
+list.  Passed to `alonso-sandbox-command' after expansion of a leading ~."
+  :type '(repeat directory)
+  :group 'alonso)
+
 (defcustom alonso-provider ""
   "Optional provider override (passed as -provider flag).  E.g. \"deepseek\" or \"google\".  Empty = default."
   :type 'string
@@ -409,10 +467,20 @@ PARAMS is a flat plist of alternating keys/values, e.g. (\"text\" \"oi\")."
 (defvar alonso-ready nil
   "Non-nil after the bridge sends the `ready' event (handshake done).")
 
+(defvar alonso--process-output ""
+  "Non-JSON output collected from the llm-bridge process.
+Anything the process writes that is not a JSON event line (typically
+stderr: the sandbox launcher's errors, a crash message, ...) is appended
+here, so a launch failure can be reported instead of a bare timeout.")
+
+(defvar alonso--last-exit-status nil
+  "Exit status of the last llm-bridge process that terminated, or nil.")
+
 (defun alonso--process-sentinel (proc event)
   "Sentinel for the llm-bridge process PROC, called with the status EVENT."
   (when (memq (process-status proc) '(exit signal))
-    (setq alonso-process nil
+    (setq alonso--last-exit-status (process-exit-status proc)
+          alonso-process nil
           alonso-ready nil
           alonso-in-turn nil
           alonso-pending-tools nil
@@ -437,7 +505,12 @@ PARAMS is a flat plist of alternating keys/values, e.g. (\"text\" \"oi\")."
   "Parse and dispatch a single JSON event LINE from the bridge."
   (let ((ev (ignore-errors (json-parse-string line
                                :object-type 'hash-table :array-type 'list))))
-    (when ev
+    (if (null ev)
+        ;; Not a JSON event: typically stderr (the sandbox launcher's error,
+        ;; a crash message).  Keep it so `alonso--ensure-ready' can explain a
+        ;; failed launch instead of reporting a bare timeout.
+        (setq alonso--process-output
+              (concat alonso--process-output line "\n"))
       (let ((event (gethash "event" ev)))
         (cl-case (intern event)
           (ready        (setq alonso-ready t))
@@ -539,6 +612,74 @@ A bare command name is left untouched so it is found via PATH."
       (expand-file-name cmd)
     cmd))
 
+(defun alonso--command-directory (cmd)
+  "Return the directory holding the executable CMD, or nil.
+CMD is resolved like `alonso--resolve-command' (a bare name is looked up
+on PATH via `executable-find').  The result ends with a slash, as
+`file-name-directory' does."
+  (when (and cmd (not (string-empty-p cmd)))
+    (let ((path (if (string-match-p "/" cmd)
+                    (expand-file-name cmd)
+                  (executable-find cmd))))
+      (when path
+        (file-name-directory path)))))
+
+(defun alonso--sandbox-enabled-p ()
+  "Return non-nil when a sandbox command is configured."
+  (and alonso-sandbox-command
+       (not (string-empty-p alonso-sandbox-command))))
+
+(defun alonso--sandbox-args ()
+  "Build the sandbox wrapper args (everything before the `--').
+Returns a list of `--ro'/`--rw' flags with their expanded directories, or
+nil when the sandbox is disabled (`alonso--sandbox-enabled-p' is nil).
+
+The directories holding the bridge and the sandbox binaries are added as
+`--ro' automatically: the sandbox denies `execute' outside the allowed
+paths, so `execvp' would fail if the binaries lived outside the `--ro'
+list (e.g. a bridge installed in ~/.local/bin).
+
+Similarly, the directory holding `alonso-logfile' is added as `--rw' when a
+log file is configured: the bridge cannot create/write the log otherwise.
+The directory (not the file) is granted, because the sandbox opens the path
+itself and the log file may not exist yet."
+  (when (alonso--sandbox-enabled-p)
+    (let ((ro (mapcar #'expand-file-name
+                      (append alonso-sandbox-ro-paths
+                              alonso-sandbox-extra-ro-paths)))
+          (rw (mapcar #'expand-file-name
+                      (append alonso-sandbox-rw-paths
+                              alonso-sandbox-extra-rw-paths))))
+      (dolist (cmd (list alonso-command alonso-sandbox-command))
+        (let ((dir (alonso--command-directory cmd)))
+          (when (and dir (not (member dir ro)))
+            (setq ro (append ro (list dir))))))
+      (unless (string-empty-p alonso-logfile)
+        (let ((dir (file-name-directory (expand-file-name alonso-logfile))))
+          (when (and dir (not (member dir rw)))
+            (setq rw (append rw (list dir))))))
+      (let (args)
+        (dolist (dir ro)
+          (setq args (append args (list "--ro" dir))))
+        (dolist (dir rw)
+          (setq args (append args (list "--rw" dir))))
+        args))))
+
+(defun alonso--start-command ()
+  "Build the full argv used to start the bridge.
+Without a sandbox it is just `alonso-command' plus `alonso--start-args'.
+With `alonso-sandbox-command' set, that bridge argv is wrapped in the sandbox:
+
+  SANDBOX [--ro DIR]... [--rw DIR]... -- BRIDGE <bridge-args>"
+  (let ((bridge (cons (alonso--resolve-command alonso-command)
+                      (alonso--start-args))))
+    (if (alonso--sandbox-enabled-p)
+        (append (list (alonso--resolve-command alonso-sandbox-command))
+                (alonso--sandbox-args)
+                (list "--")
+                bridge)
+      bridge)))
+
 (defun alonso--start-args ()
   "Build the command-line args for starting the bridge.
 The args come from the startup defcustoms (`-provider', `-model',
@@ -579,8 +720,7 @@ actually inherits."
       (when set-lib
         (setenv "LLM_BRIDGE_ONNXRUNTIME_LIB" alonso-onnxruntime-lib))
       (unwind-protect
-          (let ((cmd (cons (alonso--resolve-command alonso-command)
-                           (alonso--start-args))))
+          (let ((cmd (alonso--start-command)))
             (setq alonso-process
                   (make-process :name "llm-bridge"
                                 :buffer nil
@@ -591,7 +731,9 @@ actually inherits."
         (if old-lib
             (setenv "LLM_BRIDGE_ONNXRUNTIME_LIB" old-lib)
           (setenv "LLM_BRIDGE_ONNXRUNTIME_LIB" nil))))
-    (setq alonso-line-buffer "")
+    (setq alonso-line-buffer ""
+          alonso--process-output ""
+          alonso--last-exit-status nil)
     alonso-process))
 
 (defun alonso--ensure-ready ()
@@ -605,7 +747,26 @@ Raises an error if the process dies or the handshake times out (10s)."
                   (time-less-p (current-time) deadline))
         (accept-process-output nil 0.1)))
     (unless alonso-ready
-      (error "Timeout waiting for 'ready' from llm-bridge"))))
+      (let ((detail (alonso--ready-failure-detail)))
+        (error "Bridge failed to become ready%s"
+               (if detail (concat ": " detail)
+                 " (no `ready' within 10s)"))))))
+
+(defun alonso--ready-failure-detail ()
+  "Explain why the bridge did not emit `ready', or nil.
+Combines the process exit status and any non-JSON output (stderr) captured
+while waiting, so a launch failure (e.g. the sandbox denying `exec') is not
+reported as a bare timeout."
+  (let (parts)
+    (unless (process-live-p alonso-process)
+      (when alonso--last-exit-status
+        (push (format "process exited with code %s" alonso--last-exit-status)
+              parts)))
+    (let ((out (string-trim alonso--process-output)))
+      (unless (string-empty-p out)
+        (push out parts)))
+    (when parts
+      (mapconcat #'identity (nreverse parts) "; "))))
 
 ;;; Tool decision logic — read-only classification and trust scope
 
