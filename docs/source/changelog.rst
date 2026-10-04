@@ -7,6 +7,36 @@ The format is based on `Keep a Changelog
 <https://keepachangelog.com/en/1.1.0/>`_, and this project adheres to
 `Semantic Versioning <https://semver.org/spec/v2.0.0.html>`_.
 
+`0.3.0`_ (2026-10-04)
+---------------------
+
+Added
+~~~~~
+
+- Optional sandbox wrapper for the bridge subprocess.  Set
+  ``alonso-sandbox-command`` to a launcher (e.g. ``caged``) and the bridge is
+  run as that launcher with a list of read-only (``alonso-sandbox-ro-paths``)
+  and read-write (``alonso-sandbox-rw-paths``) paths before the bridge command.
+- Extra path lists, ``alonso-sandbox-extra-ro-paths`` and
+  ``alonso-sandbox-extra-rw-paths`` (both empty by default), appended to the
+  base lists so more paths can be granted from the init file without redefining
+  the base ones.
+- The directories holding the bridge and the sandbox binaries are added as
+  ``--ro`` automatically (so the sandbox can ``exec`` them wherever they are
+  installed), and the directory holding ``alonso-logfile`` as ``--rw``
+  automatically.
+- ``/dev/null`` and ``/dev/urandom`` are in the default read-write list: the Go
+  runtime opens ``/dev/null`` for the stdin of the tools the bridge spawns
+  (``shell``, ``grep``), and tools that create temporary files or tokens
+  (``git`` via ``mkstemp``, TLS) read ``/dev/urandom``.
+
+Fixed
+~~~~~
+
+- A failed sandbox launch (e.g. the sandbox denying ``exec``) is now reported
+  with the process's stderr and exit status, instead of a bare ``ready``
+  timeout.
+
 `0.2.0`_ (2026-10-03)
 ---------------------
 
@@ -59,5 +89,6 @@ Added
   hooks (prompts starting with ``#``).
 - A conversation/input mode line showing the model, token usage and status.
 
+.. _0.3.0: https://github.com/poraodojuca/alonso/compare/v0.2.0...v0.3.0
 .. _0.2.0: https://github.com/poraodojuca/alonso/compare/v0.1.0...v0.2.0
 .. _0.1.0: https://github.com/poraodojuca/alonso/releases/tag/v0.1.0

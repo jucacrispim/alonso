@@ -38,6 +38,9 @@ A few of the key bindings:
 | `C-c C-a l` | `alonso-open`    | Start the client                     |
 | `C-c C-a r` | `alonso-restart` | Restart the bridge and reopen        |
 | `C-c C-a k` | `alonso-kill`    | Terminate the bridge and clean up    |
+| `C-c C-a c` | `alonso-cancel`  | Cancel the current in-flight turn    |
+| `C-c C-a q` | `alonso-quit`    | Send `quit` to the bridge and stop   |
+| `C-c C-a w` | `alonso-toggle-show-thinking` | Toggle the thinking display (text or spinner placeholder) |
 
 ## Sandbox
 
@@ -53,7 +56,7 @@ caged [--ro DIR]... [--rw DIR]... -- llm-bridge <bridge-args>
 The read-only and read-write directories come from `alonso-sandbox-ro-paths`
 (default: `/usr`, `/bin`, `/lib`, `/etc`) and `alonso-sandbox-rw-paths`
 (default: `~/.cache/llm-bridge`, `~/.llm-bridge`,
-`~/.local/share/llm-bridge`).  Two extra lists,
+`~/.local/share/llm-bridge`, `/dev/null`, `/dev/urandom`).  Two extra lists,
 `alonso-sandbox-extra-ro-paths` and `alonso-sandbox-extra-rw-paths` (both empty
 by default), are appended to those, so you can grant more paths from your init
 file without redefining the base lists.  The directories holding the bridge and the
@@ -68,9 +71,6 @@ runtime open it for the stdin of the tools it spawns (`shell`, `grep`); and
 the tool fails with `permission denied` or `unable to get random bytes`.  The sandbox
 is **off by default** (`alonso-sandbox-command` is empty), so the bridge is
 started directly unless you configure it.
-| `C-c C-a c` | `alonso-cancel`  | Cancel the current in-flight turn    |
-| `C-c C-a q` | `alonso-quit`    | Send `quit` to the bridge and stop   |
-| `C-c C-a w` | `alonso-toggle-show-thinking` | Toggle the thinking display (text or spinner placeholder) |
 
 ## Documentation
 
