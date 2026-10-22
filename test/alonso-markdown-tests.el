@@ -330,6 +330,144 @@
     (should (memq 'font-lock-keyword-face
                   (alonso-tests--md-faces "setq")))))
 
+;;; Live (streaming) code-block fontification
+;;;
+;;; While the answer streams, the whole segment is re-rendered on every
+;;; `chunk'.  To avoid re-fontifying a long (C) code block from scratch on
+;;; every chunk, the open block is fontified incrementally into a persistent
+;;; work buffer, and an already-fontified block is skipped through the
+;;; `alonso-md-code-fontified' marker on its opening fence.  These tests check
+;;; the highlighting still comes out right and that the work is not redone.
+
+(defun alonso-markdown-tests--faces-per-char ()
+  "Return the buffer's `face' property for each character, in order.
+Comparing faces per character (not per run) makes the check independent
+of how the runs happen to be split."
+  (let ((out nil) (p (point-min)))
+    (while (< p (point-max))
+      (push (get-text-property p 'face) out)
+      (setq p (1+ p)))
+    (nreverse out)))
+
+(defun alonso-markdown-tests--render-full (text)
+  "Render TEXT in a fresh buffer (non-live); return its per-char faces."
+  (with-temp-buffer
+    (insert text)
+    (alonso--render-markdown-region (point-min) (point-max))
+    (alonso-markdown-tests--faces-per-char)))
+
+(defun alonso-markdown-tests--render-streamed (pieces)
+  "Render PIECES one by one as if streaming.
+Each piece is appended and the segment re-rendered live (as a `chunk'
+does); no final non-live render is done, so the open block is left as the
+incremental fontification produced it.  Returns the per-char faces."
+  (with-temp-buffer
+    (dolist (piece pieces)
+      (goto-char (point-max))
+      (insert piece)
+      (alonso--render-markdown-region (point-min) (point-max) t))
+    (alonso-markdown-tests--faces-per-char)))
+
+(defconst alonso-markdown-tests--c-pieces
+  '("```c\n"
+    "int main(void) {\n"
+    "  /* um comentario\n"
+    "     que ocupa varias linhas */\n"
+    "  const char *s = \"uma string\";\n"
+    "  if (s) { return 0;\n")
+  "C code split into pieces, one per streaming chunk (left unbalanced).")
+
+(defconst alonso-markdown-tests--c-block
+  (apply #'concat alonso-markdown-tests--c-pieces)
+  "The C code of `alonso-markdown-tests--c-pieces' as a single string.")
+
+(ert-deftest alonso-markdown--live-open-block-syntax-highlighted ()
+  :tags '(markdown)
+  (with-temp-buffer
+    (insert alonso-markdown-tests--c-block)
+    (alonso--render-markdown-region (point-min) (point-max) t)
+    ;; The still-open block is syntax-highlighted and keeps the base face.
+    (should (memq 'font-lock-type-face (alonso-tests--md-faces "int")))
+    (should (memq 'font-lock-comment-face
+                  (alonso-tests--md-faces "comentario")))
+    (should (memq 'alonso-md-code-face (alonso-tests--md-faces "main")))))
+
+(ert-deftest alonso-markdown--live-open-block-keeps-base-face ()
+  :tags '(markdown)
+  (with-temp-buffer
+    (insert alonso-markdown-tests--c-block)
+    (alonso--render-markdown-region (point-min) (point-max) t)
+    ;; Every code character keeps the base face; the syntax face is composed
+    ;; on top where there is one.
+    (should (memq 'alonso-md-code-face
+                  (alonso-tests--md-faces "\"uma string\"")))))
+
+(ert-deftest alonso-markdown--live-open-block-faces-match-full ()
+  :tags '(markdown)
+  ;; The incremental fontification of the open block must produce exactly the
+  ;; same faces as fontifying the whole block in one go.
+  (should (equal (alonso-markdown-tests--render-full
+                  alonso-markdown-tests--c-block)
+                 (alonso-markdown-tests--render-streamed
+                  alonso-markdown-tests--c-pieces))))
+
+(ert-deftest alonso-markdown--live-closed-block-faces-match-full ()
+  :tags '(markdown)
+  ;; A block streamed and then closed (as a whole turn does) must end up with
+  ;; exactly the same faces as a one-shot render.
+  (let* ((pieces (append alonso-markdown-tests--c-pieces '("  }\n" "}\n" "```\n")))
+         (text (apply #'concat pieces)))
+    (should (equal (alonso-markdown-tests--render-full text)
+                   (with-temp-buffer
+                     (dolist (piece pieces)
+                       (goto-char (point-max))
+                       (insert piece)
+                       (alonso--render-markdown-region (point-min) (point-max) t))
+                     ;; the turn ends: a final non-live render closes the segment
+                     (alonso--render-markdown-region (point-min) (point-max))
+                     (alonso-markdown-tests--faces-per-char))))))
+
+(ert-deftest alonso-markdown--live-closed-block-not-refontified-on-rerender ()
+  :tags '(markdown)
+  (with-temp-buffer
+    (insert "```elisp\n(setq x 1)\n```\n")
+    (alonso--render-markdown-region (point-min) (point-max) t)
+    ;; The block got the "already fontified" marker on its opening fence...
+    (should (get-text-property (point-min) 'alonso-md-code-fontified))
+    ;; ...so a second live pass must not fontify anything again.
+    (let ((calls 0))
+      (cl-letf (((symbol-function 'font-lock-ensure)
+                 (lambda (&rest _) (cl-incf calls))))
+        (alonso--render-markdown-region (point-min) (point-max) t))
+      (should (= 0 calls)))))
+
+(ert-deftest alonso-markdown--live-open-block-fontified-incrementally ()
+  :tags '(markdown)
+  ;; With a block larger than the context window, each chunk must fontify only
+  ;; the new text (plus the bounded context), never the whole growing block --
+  ;; otherwise the total cost would be quadratic in the block size.
+  (with-temp-buffer
+    (insert "```c\n")
+    (let ((line "  if (x) { do_something (1);\n")
+          (sizes nil))
+      (cl-letf (((symbol-function 'font-lock-ensure)
+                 (lambda (beg end &optional _loudly)
+                   (push (- end beg) sizes))))
+        (dotimes (_ 40)
+          (goto-char (point-max))
+          (insert line)
+          (alonso--render-markdown-region (point-min) (point-max) t)))
+      (should (<= (apply #'max sizes)
+                  (+ alonso--md-live-context (length line) 5))))))
+
+(ert-deftest alonso-markdown--live-rendering-does-not-change-text ()
+  :tags '(markdown)
+  (with-temp-buffer
+    (insert (apply #'concat alonso-markdown-tests--c-pieces))
+    (alonso--render-markdown-region (point-min) (point-max) t)
+    (should (equal (apply #'concat alonso-markdown-tests--c-pieces)
+                   (buffer-substring-no-properties (point-min) (point-max))))))
+
 (provide 'alonso-markdown-tests)
 
 ;;; alonso-markdown-tests.el ends here

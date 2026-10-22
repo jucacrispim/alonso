@@ -921,6 +921,35 @@ Return (RETURN-VALUE METHOD CWD)."
                    (with-current-buffer (alonso--get-buffer)
                      (buffer-substring-no-properties (point-min) (point-max)))))))
 
+;; The live render must tell `alonso--render-markdown-region' it is streaming
+;; (so code blocks are not re-fontified from scratch on every chunk), while the
+;; final render does not.
+
+(defun alonso-ui-tests--capture-render-live-arg (render-fn)
+  "Call RENDER-FN (a render closure) with the region renderer stubbed.
+Return the LIVE argument it passed to `alonso--render-markdown-region'."
+  (let ((args nil))
+    (cl-letf (((symbol-function 'alonso--render-markdown-region)
+               (lambda (start end &optional live)
+                 (setq args (list start end live)))))
+      (funcall render-fn))
+    (nth 2 args)))
+
+(ert-deftest alonso-ui--render-answer-live-passes-live-flag ()
+  :tags '(ui)
+  (let ((alonso-render-markdown-live t))
+    (alonso-ui-tests--reset-conversation-state)
+    (alonso--on-chunk "# Hi\n")
+    (should (eq t (alonso-ui-tests--capture-render-live-arg
+                   #'alonso--render-answer-live)))))
+
+(ert-deftest alonso-ui--render-answer-passes-no-live-flag ()
+  :tags '(ui)
+  (alonso-ui-tests--reset-conversation-state)
+  (alonso--on-chunk "# Hi\n")
+  (should (null (alonso-ui-tests--capture-render-live-arg
+                 #'alonso--render-answer))))
+
 ;; turn_end closes (and renders) the pending answer
 
 (ert-deftest alonso-ui--turn-end-renders-pending-answer ()

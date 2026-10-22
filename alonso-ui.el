@@ -50,7 +50,7 @@
 (require 'alonso-client)
 
 ;; Rendering/UX helpers defined in the sibling files, called at runtime.
-(declare-function alonso--render-markdown-region "alonso-markdown" (start end))
+(declare-function alonso--render-markdown-region "alonso-markdown" (start end &optional live))
 (declare-function alonso--buffer-collect "alonso-image" ())
 (declare-function alonso--buffer-collect-segments "alonso-image" ())
 (declare-function alonso--image-string "alonso-image" (spec))
@@ -222,7 +222,7 @@ stops writing (thinking, tool call, end of turn)."
         (with-current-buffer (alonso--get-buffer)
           (let ((end (point-max)))
             (when (< start end)
-              (alonso--render-markdown-region start end))))))))
+              (alonso--render-markdown-region start end nil))))))))
 
 (defun alonso--render-answer-live ()
   "Re-render the pending answer segment without closing it.
@@ -237,7 +237,7 @@ never shown with a half-written marker hidden."
         (with-current-buffer (alonso--get-buffer)
           (let ((end (point-max)))
             (when (< start end)
-              (alonso--render-markdown-region start end))))))))
+              (alonso--render-markdown-region start end t))))))))
 
 (defun alonso--show-answer-start ()
   "Leave the conversation window showing the start of the turn's answer.

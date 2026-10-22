@@ -426,10 +426,141 @@ its mode is unavailable."
                                  'face (list (nth 2 run)
                                              'alonso-md-code-face)))))))))
 
-(defun alonso--render-markdown-region (start end)
+;;; Incremental fontification of the streaming code blocks
+;;
+;; While the answer streams (live rendering) the whole segment is re-rendered
+;; on every `chunk'.  Re-fontifying each code block from scratch every time is
+;; quadratic -- and the worst offender is C: cc-mode's font-lock is very slow
+;; on unbalanced braces, exactly the state of a C function while it is still
+;; being written.  To keep the syntax highlighting live without the stalls,
+;; the *open* block is fontified incrementally into a persistent work buffer
+;; (only the text that just arrived is fontified, plus a little context), and
+;; a block that is already fontified is skipped through the
+;; `alonso-md-code-fontified' marker on its opening fence.
+
+(defconst alonso--md-live-context 200
+  "Characters of context re-fontified before the newly arrived code.
+When a block is fontified incrementally, the last few hundred characters are
+re-scanned together with the new text, so a construct that spans the chunk
+boundary (a multi-line comment or string) is fontified correctly.  Small
+enough that the per-chunk cost stays constant.")
+
+(defvar-local alonso--md-live-cache nil
+  "Work buffer used to fontify the *open* code block while streaming.
+A plist (:buffer B :start N :copied M :mode MODE :lang LANG): B is a
+temporary buffer holding a copy of the block's code copied so far, START the
+conversation buffer position where the block's code begins, COPIED how many
+characters of it were already copied into B, MODE the major mode in use and
+LANG the fence language.  nil when no block is being fontified incrementally.
+Killed by `alonso--md-live-cache-reset'.")
+
+(defun alonso--md-live-cache-reset ()
+  "Discard the incremental code-block work buffer, if any."
+  (when alonso--md-live-cache
+    (let ((buf (plist-get alonso--md-live-cache :buffer)))
+      (when (buffer-live-p buf) (kill-buffer buf)))
+    (setq alonso--md-live-cache nil)))
+
+(defun alonso--md-code-block-fontify (start end lang)
+  "Fontify the whole code block between START and END as LANG.
+Applies the base `alonso-md-code-face' over the block, then the language
+syntax highlighting on top (see `alonso--md-highlight-code')."
+  (alonso--md-face start end 'alonso-md-code-face)
+  (alonso--md-highlight-code start end lang))
+
+(defun alonso--md-code-block-flush-runs (runs start)
+  "Apply the collected font-lock RUNS to the current (conversation) buffer.
+RUNS is a list of (BEG END FACE) triples with BEG/END relative to the block
+start; START is the conversation position where the block's code begins.
+Each run's syntax face is composed with the base `alonso-md-code-face'
+\(the syntax face first, so it wins the foreground; the base face last, so
+the block keeps the code font), exactly as `alonso--md-highlight-code'."
+  (dolist (run (nreverse runs))
+    (put-text-property (+ start (nth 0 run)) (+ start (nth 1 run))
+                       'face (list (nth 2 run) 'alonso-md-code-face))))
+
+(defun alonso--md-code-block-fontify-live (start end lang)
+  "Fontify the open code block between START and END incrementally, as LANG.
+Keeps a persistent work buffer (see `alonso--md-live-cache') and fontifies
+only the text that arrived since the previous call, so a long block is not
+re-fontified from scratch on every streaming `chunk'.  Falls back to the
+plain base face when the block cannot be fontified (no language, unknown
+mode, fontification disabled)."
+  (let ((mode (and alonso-fontify-code-blocks lang
+                  (cdr (assoc (downcase lang) alonso--md-lang-mode)))))
+    (if (and mode (fboundp mode))
+        (progn
+          (unless (and alonso--md-live-cache
+                       (eq (plist-get alonso--md-live-cache :start) start)
+                       (equal (plist-get alonso--md-live-cache :lang) lang))
+            (alonso--md-live-cache-reset)
+            (setq alonso--md-live-cache
+                  (list :buffer (generate-new-buffer " *alonso-md-code*")
+                        :start start :copied 0 :mode mode :lang lang))
+            (with-current-buffer (plist-get alonso--md-live-cache :buffer)
+              (delay-mode-hooks (funcall mode))
+              (unless font-lock-mode (font-lock-mode 1)))
+            (add-hook 'kill-buffer-hook #'alonso--md-live-cache-reset nil t))
+          (let* ((copied (plist-get alonso--md-live-cache :copied))
+                 (conv-upto (+ start copied)))
+            (when (< conv-upto end)
+              (alonso--md-face conv-upto end 'alonso-md-code-face)
+              (let ((buf (plist-get alonso--md-live-cache :buffer))
+                    (chunk (buffer-substring-no-properties conv-upto end))
+                    (runs nil)
+                    (temp-size nil))
+                (with-current-buffer buf
+                  (goto-char (point-max))
+                  (let* ((temp-upto (point))
+                         (lo (max (point-min)
+                                  (- temp-upto alonso--md-live-context))))
+                    (insert chunk)
+                    (font-lock-ensure lo (point-max))
+                    (let ((p lo) (max (point-max)))
+                      (while (< p max)
+                        (let ((next (next-single-property-change p 'face nil max))
+                              (fl (get-text-property p 'face)))
+                          (when fl
+                            (push (list (- p (point-min)) (- next (point-min)) fl)
+                                  runs))
+                          (setq p next))))
+                    (setq temp-size (- (point-max) (point-min)))))
+                ;; Record the progress in the conversation buffer (the one
+                ;; that holds the cache), not in the work buffer.
+                (setq alonso--md-live-cache
+                      (plist-put alonso--md-live-cache :copied temp-size))
+                (alonso--md-code-block-flush-runs runs start)))))
+      (alonso--md-face start end 'alonso-md-code-face))))
+
+(defun alonso--md-code-block-finish (start end lang fence)
+  "Fontify the closed code block between START and END as LANG, once.
+FENCE is the position of the block's opening fence line, where the
+`alonso-md-code-fontified' marker is kept: when the block was already
+fontified (during live streaming) it is left untouched."
+  (unless (get-text-property fence 'alonso-md-code-fontified)
+    (alonso--md-code-block-fontify start end lang)
+    (put-text-property fence (1+ fence) 'alonso-md-code-fontified t)))
+
+(defun alonso--md-code-block-finish-live (start end lang fence)
+  "Finish the code block closed by the fence at FENCE, while streaming.
+The block was fontified incrementally as it streamed (see
+`alonso--md-code-block-fontify-live'); here we only flush the content that
+arrived since the last live render -- usually nothing, since the closing
+fence is all that was just added -- and record the `alonso-md-code-fontified'
+marker, instead of re-fontifying the whole block from scratch."
+  (alonso--md-code-block-fontify-live start end lang)
+  (put-text-property fence (1+ fence) 'alonso-md-code-fontified t)
+  (alonso--md-live-cache-reset))
+
+(defun alonso--render-markdown-region (start end &optional live)
   "Render the Markdown constructs between START and END (buffer positions).
 Only text properties are added (`face', `display' and a clickable `keymap'
-on links), so the buffer text stays byte-for-byte identical."
+on links), so the buffer text stays byte-for-byte identical.
+When LIVE is non-nil the segment is re-rendered while it still streams (see
+`alonso-render-markdown-live'): a code block that is already fontified is
+skipped, and a still-open block is fontified incrementally, so a long C
+block does not stall Emacs by being re-fontified from scratch on every
+`chunk'."
   (when alonso-render-markdown
     (let ((inhibit-read-only t))
       (with-silent-modifications
@@ -439,7 +570,9 @@ on links), so the buffer text stays byte-for-byte identical."
             (goto-char (point-min))
             (let ((in-code nil)
                   (code-start nil)
-                  (code-lang nil))
+                  (code-lang nil)
+                  (code-fence nil)
+                  (code-done nil))
               (while (< (point) (point-max))
                 (let* ((line-start (point))
                        (line-end (line-end-position)))
@@ -448,18 +581,36 @@ on links), so the buffer text stays byte-for-byte identical."
                    (in-code
                     (if (looking-at-p "[ \t]*```")
                         (progn
-                          (alonso--md-highlight-code
-                           code-start line-start code-lang)
-                          (setq in-code nil code-start nil code-lang nil)
+                          ;; Fontify the block once, at its closing fence; a
+                          ;; block already fontified (while streaming) is left
+                          ;; alone.  While streaming, only flush what arrived
+                          ;; since the last render instead of re-fontifying the
+                          ;; whole block.
+                          (unless code-done
+                            (if live
+                                (alonso--md-code-block-finish-live
+                                 code-start line-start code-lang code-fence)
+                              (alonso--md-code-block-finish
+                               code-start line-start code-lang code-fence)))
+                          (setq in-code nil code-start nil code-lang nil
+                                code-fence nil code-done nil)
+                          (alonso--md-live-cache-reset)
                           (alonso--md-fence-line line-start line-end))
-                      (alonso--md-face line-start
-                                               (alonso--md-line-end)
-                                               'alonso-md-code-face)))
+                      ;; A content line gets the base face here only in the
+                      ;; non-live path; while streaming (live) the incremental
+                      ;; helper is the one that applies the faces.
+                      (unless (or live code-done)
+                        (alonso--md-face line-start
+                                         (alonso--md-line-end)
+                                         'alonso-md-code-face))))
                    ;; a fence opening a code block
                    ((looking-at-p "[ \t]*```")
                     (setq in-code t
                           code-lang (alonso--md-fence-lang)
-                          code-start (alonso--md-line-end))
+                          code-start (alonso--md-line-end)
+                          code-fence line-start
+                          code-done (get-text-property
+                                     line-start 'alonso-md-code-fontified))
                     (alonso--md-fence-line line-start line-end))
                    (t
                     (alonso--md-normal-line line-start line-end)))
@@ -467,8 +618,12 @@ on links), so the buffer text stays byte-for-byte identical."
                   (forward-line 1)))
               ;; a code block left open at the end of the segment
               (when in-code
-                (alonso--md-highlight-code
-                 code-start (point-max) code-lang)))))))))
+                (if live
+                    (alonso--md-code-block-fontify-live
+                     code-start (point-max) code-lang)
+                  (unless code-done
+                    (alonso--md-code-block-fontify
+                     code-start (point-max) code-lang)))))))))))
 
 (provide 'alonso-markdown)
 
