@@ -402,6 +402,16 @@ incremental fontification produced it.  Returns the per-char faces."
     (should (memq 'alonso-md-code-face
                   (alonso-tests--md-faces "\"uma string\"")))))
 
+(ert-deftest alonso-markdown--live-open-block-without-language-keeps-base-face ()
+  :tags '(markdown)
+  ;; A block that cannot be fontified (here, one with no language) still gets
+  ;; the base face while streaming: the live path must fall back to it.
+  (with-temp-buffer
+    (insert "```\n(setq x 1)\n")
+    (alonso--render-markdown-region (point-min) (point-max) t)
+    (should (equal '(alonso-md-code-face)
+                   (alonso-tests--md-faces "setq")))))
+
 (ert-deftest alonso-markdown--live-open-block-faces-match-full ()
   :tags '(markdown)
   ;; The incremental fontification of the open block must produce exactly the

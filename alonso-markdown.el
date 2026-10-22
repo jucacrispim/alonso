@@ -469,9 +469,9 @@ syntax highlighting on top (see `alonso--md-highlight-code')."
   (alonso--md-highlight-code start end lang))
 
 (defun alonso--md-code-block-flush-runs (runs start)
-  "Apply the collected font-lock RUNS to the current (conversation) buffer.
-RUNS is a list of (BEG END FACE) triples with BEG/END relative to the block
-start; START is the conversation position where the block's code begins.
+  "Apply the collected font-lock triples to the current (conversation) buffer.
+Each element of RUNS is a (BEG END FACE) triple with BEG/END relative to the
+block start; START is the conversation position where the block's code begins.
 Each run's syntax face is composed with the base `alonso-md-code-face'
 \(the syntax face first, so it wins the foreground; the base face last, so
 the block keeps the code font), exactly as `alonso--md-highlight-code'."
@@ -542,8 +542,9 @@ fontified (during live streaming) it is left untouched."
     (put-text-property fence (1+ fence) 'alonso-md-code-fontified t)))
 
 (defun alonso--md-code-block-finish-live (start end lang fence)
-  "Finish the code block closed by the fence at FENCE, while streaming.
-The block was fontified incrementally as it streamed (see
+  "Finish the code block from START to END written in LANG, while streaming.
+FENCE is the position of the block's opening fence line.  The block was
+fontified incrementally as it streamed (see
 `alonso--md-code-block-fontify-live'); here we only flush the content that
 arrived since the last live render -- usually nothing, since the closing
 fence is all that was just added -- and record the `alonso-md-code-fontified'
