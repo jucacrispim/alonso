@@ -7,6 +7,35 @@ The format is based on `Keep a Changelog
 <https://keepachangelog.com/en/1.1.0/>`_, and this project adheres to
 `Semantic Versioning <https://semver.org/spec/v2.0.0.html>`_.
 
+0.4.0 (2026-10-21)
+------------------
+
+Added
+~~~~~
+
+- ``alonso-sandbox-extra-args``: extra flags emitted to the sandbox launcher
+  before the ``--`` (after the ``--ro``/``--rw`` paths).  The default,
+  ``--allow-network-sockets`` and ``--allow-connect-port 443``, is what
+  ``caged`` 0.2.0 needs for the bridge to reach its provider: without the
+  socket family even DNS fails (the resolver opens a netlink socket), and
+  without the port rule Landlock blocks the HTTPS connection.
+- ``alonso-sandbox-env-vars``: names of environment variables passed through
+  as ``--env NAME=VALUE``, only for the ones actually set at launch.  This is
+  required because ``caged`` 0.2.0 wipes the child environment by default
+  (only ``PATH``, ``HOME``, ``LANG``, ``LANGUAGE`` and ``LC_*`` survive);
+  passing them one by one instead of using ``--keep-env`` keeps
+  ``SSH_AUTH_SOCK``, ``DISPLAY`` and ``DBUS_*`` out of the sandbox.
+- ``alonso-sandbox-launcher-env``: an alist applied with ``setenv`` around the
+  spawn (and restored afterwards) so the *launcher* sees it — e.g.
+  ``CAGED_DISABLE_WARNINGS=1`` to silence ``caged``'s Landlock ABI warning,
+  which would otherwise be reported as a launch failure.
+
+Changed
+~~~~~~~
+
+- The sandbox argv is now ``SANDBOX [--ro DIR]... [--rw DIR]...
+  [EXTRA-ARGS]... [--env NAME=VALUE]... -- BRIDGE <args>``.
+
 `0.3.0`_ (2026-10-04)
 ---------------------
 
