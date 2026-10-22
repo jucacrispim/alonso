@@ -50,7 +50,7 @@ process sandbox).  Set `alonso-sandbox-command` to the launcher and it will be
 run as:
 
 ```
-caged [--ro DIR]... [--rw DIR]... -- llm-bridge <bridge-args>
+caged [--ro DIR]... [--rw DIR]... [EXTRA-ARGS]... [--env NAME=VALUE]... -- llm-bridge <bridge-args>
 ```
 
 The read-only and read-write directories come from `alonso-sandbox-ro-paths`
@@ -71,6 +71,30 @@ runtime open it for the stdin of the tools it spawns (`shell`, `grep`); and
 the tool fails with `permission denied` or `unable to get random bytes`.  The sandbox
 is **off by default** (`alonso-sandbox-command` is empty), so the bridge is
 started directly unless you configure it.
+
+Three more settings cover the extra layers of `caged` 0.2.0 (which governs
+network, environment and rlimits on top of the filesystem):
+
+`alonso-sandbox-extra-args` (default `--allow-network-sockets
+--allow-connect-port 443`) is emitted verbatim after the paths.  Without the
+socket family the bridge cannot even do DNS (the resolver opens a netlink
+socket), and without the port rule Landlock blocks the provider's HTTPS
+connection.  Add a `--allow-connect-port` for each extra port (a proxy, a
+local server); for another launcher set the list to `nil`.
+
+`alonso-sandbox-env-vars` is a list of variable *names* passed as
+`--env NAME=VALUE`, only for the ones actually set when the bridge is
+launched.  Its default is the set the bridge reads (`DEEPSEEK_API_KEY`,
+`GOOGLE_*`/`GEMINI_*`, the `*_URL`/`*_MODEL` overrides, `KNOWLEDGE_BASE`,
+`LLM_BRIDGE_KB_*`, `LLM_BRIDGE_ONNXRUNTIME_LIB`, `LLM_BRIDGE_PATH`,
+`NO_COLOR`).  This is needed because `caged` 0.2.0 wipes the child
+environment by default; passing the variables one by one (rather than
+`--keep-env`) keeps `SSH_AUTH_SOCK`, `DISPLAY`, `DBUS_*` and friends out.
+
+`alonso-sandbox-launcher-env` (default `CAGED_DISABLE_WARNINGS=1`) sets
+variables in the *launcher's* environment around the spawn.  It silences
+`caged`'s "Landlock ABI 6 does not support some features" warning, which
+otherwise arrives on stderr and is reported as a launch failure.
 
 ## Documentation
 

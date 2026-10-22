@@ -125,6 +125,71 @@ list.  Passed to `alonso-sandbox-command' after expansion of a leading ~."
   :type '(repeat directory)
   :group 'alonso)
 
+(defcustom alonso-sandbox-extra-args '("--allow-network-sockets"
+                                       "--allow-connect-port" "443")
+  "Extra flags passed to `alonso-sandbox-command', before the `--'.
+Emitted verbatim (and in order) after the `--ro'/`--rw' flags and before
+the `--env' pairs, so they can carry both options and their values
+\(e.g. \"--allow-connect-port\" \"443\").  Use it for flags with no
+dedicated defcustom (`--max-procs', `--require-abi', `--tsync',
+`--allow-unix-sockets', a proxy port, ...).
+
+The default is what caged 0.2.0 needs for the bridge to reach its provider:
+
+`--allow-network-sockets' lets the bridge create `AF_INET'/`AF_INET6'
+\(and `AF_NETLINK') sockets.  Without it `socket' fails with EACCES and
+DNS dies with it, because the resolver opens a netlink socket.
+
+`--allow-connect-port' \"443\" lets the bridge connect to the provider's
+HTTPS port (`api.deepseek.com', `generativelanguage.googleapis.com').
+Add one `--allow-connect-port' per extra port when the provider URL
+points elsewhere (a proxy, a local server).  DNS itself needs no port
+rule: it is UDP/53 and Landlock does not govern UDP.
+
+Set it to nil for a launcher that does not understand these flags."
+  :type '(repeat string)
+  :group 'alonso)
+
+(defcustom alonso-sandbox-env-vars
+  '("DEEPSEEK_API_KEY"
+    "DEEPSEEK_URL" "DEEPSEEK_MODEL" "DEEPSEEK_REASONING_EFFORT"
+    "GOOGLE_API_KEY" "GOOGLE_URL" "GOOGLE_MODEL" "GOOGLE_THINKING_BUDGET"
+    "GEMINI_API_KEY" "GEMINI_MODEL"
+    "KNOWLEDGE_BASE"
+    "LLM_BRIDGE_KB_MODEL" "LLM_BRIDGE_KB_TOKENIZER"
+    "LLM_BRIDGE_ONNXRUNTIME_LIB"
+    "LLM_BRIDGE_PATH"
+    "NO_COLOR")
+  "Environment variable names passed through to the bridge (one `--env' each).
+Only the variables that are actually set are emitted, as
+\(`--env' \"NAME=VALUE\"), read from the Emacs environment at launch time.
+
+This exists because caged 0.2.0 wipes the child environment by default,
+keeping only `PATH', `HOME', `LANG', `LANGUAGE' and the `LC_*' variables;
+anything else (the API key, the provider URL, the KB settings, the
+onnxruntime lib) must be named here or the bridge silently loses it.
+
+Passing variables one by one (instead of `--keep-env') keeps the rest of
+the cleanup: `SSH_AUTH_SOCK', `DISPLAY', `XAUTHORITY', `DBUS_*' and
+friends stay out of the sandbox.  Note that `--env' reaches the bridge,
+not the launcher itself (see `alonso-sandbox-launcher-env' for that)."
+  :type '(repeat string)
+  :group 'alonso)
+
+(defcustom alonso-sandbox-launcher-env '(("CAGED_DISABLE_WARNINGS" . "1"))
+  "Environment variables set in the launcher's own environment at launch.
+An alist of (NAME . VALUE), applied with `setenv' around the `make-process'
+call and restored afterwards, so only the launcher sees them.  nil unsets
+the variable for the spawn.
+
+The default silences caged 0.2.0's ABI warning (\"Landlock ABI 6 does not
+support some features\"), which is printed on stderr: `alonso-client' treats
+any stderr line as a launch error, so the warning would surface as a bogus
+failure.  It cannot be passed as `--env': the launcher reads it from its own
+environment, before building the child's."
+  :type '(alist :key-type string :value-type string)
+  :group 'alonso)
+
 (defcustom alonso-provider ""
   "Optional provider override (passed as -provider flag).  E.g. \"deepseek\" or \"google\".  Empty = default."
   :type 'string
@@ -629,10 +694,40 @@ on PATH via `executable-find').  The result ends with a slash, as
   (and alonso-sandbox-command
        (not (string-empty-p alonso-sandbox-command))))
 
+(defun alonso--sandbox-env-args ()
+  "Build the `--env' pairs for the variables the bridge needs.
+Walks `alonso-sandbox-env-vars' and emits (`--env' \"NAME=VALUE\") for the
+ones that are set in the current environment, skipping the unset ones."
+  (let (args)
+    (dolist (name alonso-sandbox-env-vars)
+      (let ((value (getenv name)))
+        (when value
+          (setq args (append args (list "--env" (concat name "=" value)))))))
+    args))
+
+(defun alonso--call-with-launcher-env (fn)
+  "Call FN with `alonso-sandbox-launcher-env' applied, restoring it after.
+Does nothing when the sandbox is disabled: those variables exist for the
+launcher, not for a bare bridge.  The previous values are restored with
+`unwind-protect', so a failing spawn does not leak them."
+  (if (not (alonso--sandbox-enabled-p))
+      (funcall fn)
+    (let ((saved (mapcar (lambda (pair) (cons (car pair) (getenv (car pair))))
+                         alonso-sandbox-launcher-env)))
+      (unwind-protect
+          (progn
+            (dolist (pair alonso-sandbox-launcher-env)
+              (setenv (car pair) (cdr pair)))
+            (funcall fn))
+        (dolist (pair saved)
+          (setenv (car pair) (cdr pair)))))))
+
 (defun alonso--sandbox-args ()
   "Build the sandbox wrapper args (everything before the `--').
-Returns a list of `--ro'/`--rw' flags with their expanded directories, or
-nil when the sandbox is disabled (`alonso--sandbox-enabled-p' is nil).
+Returns `--ro'/`--rw' flags with their expanded directories, followed by
+`alonso-sandbox-extra-args' and the `--env' pairs from
+`alonso--sandbox-env-args'; nil when the sandbox is disabled
+\(`alonso--sandbox-enabled-p' is nil).
 
 The directories holding the bridge and the sandbox binaries are added as
 `--ro' automatically: the sandbox denies `execute' outside the allowed
@@ -663,6 +758,8 @@ itself and the log file may not exist yet."
           (setq args (append args (list "--ro" dir))))
         (dolist (dir rw)
           (setq args (append args (list "--rw" dir))))
+        (setq args (append args alonso-sandbox-extra-args))
+        (setq args (append args (alonso--sandbox-env-args)))
         args))))
 
 (defun alonso--start-command ()
@@ -670,7 +767,12 @@ itself and the log file may not exist yet."
 Without a sandbox it is just `alonso-command' plus `alonso--start-args'.
 With `alonso-sandbox-command' set, that bridge argv is wrapped in the sandbox:
 
-  SANDBOX [--ro DIR]... [--rw DIR]... -- BRIDGE <bridge-args>"
+  SANDBOX [--ro DIR]... [--rw DIR]... [EXTRA-ARGS]... [--env NAME=VALUE]...
+          -- BRIDGE <bridge-args>
+
+EXTRA-ARGS come from `alonso-sandbox-extra-args' and the `--env' pairs from
+`alonso-sandbox-env-vars', with the values read from the current
+environment at launch time."
   (let ((bridge (cons (alonso--resolve-command alonso-command)
                       (alonso--start-args))))
     (if (alonso--sandbox-enabled-p)
@@ -711,7 +813,12 @@ a `make build-kb' bridge can dlopen the runtime lib and use the project
 knowledge base), then the previous value is restored.  Note: we cannot use the
 `make-process' `:environment' keyword because in some Emacs builds it is
 silently ignored — `setenv' against `process-environment' is what the child
-actually inherits."
+actually inherits.
+
+`alonso-sandbox-launcher-env' is applied around the spawn by
+`alonso--call-with-launcher-env' (and restored afterwards), so the launcher
+\(e.g. caged) sees it; the variables meant for the bridge itself go through
+`alonso-sandbox-env-vars' as `--env' flags."
   (if (and alonso-process (process-live-p alonso-process))
       alonso-process
     (let* ((old-lib (getenv "LLM_BRIDGE_ONNXRUNTIME_LIB"))
@@ -720,14 +827,16 @@ actually inherits."
       (when set-lib
         (setenv "LLM_BRIDGE_ONNXRUNTIME_LIB" alonso-onnxruntime-lib))
       (unwind-protect
-          (let ((cmd (alonso--start-command)))
-            (setq alonso-process
-                  (make-process :name "llm-bridge"
-                                :buffer nil
-                                :command cmd
-                                :connection-type 'pipe
-                                :filter #'alonso--process-filter
-                                :sentinel #'alonso--process-sentinel)))
+          (alonso--call-with-launcher-env
+           (lambda ()
+             (let ((cmd (alonso--start-command)))
+               (setq alonso-process
+                     (make-process :name "llm-bridge"
+                                   :buffer nil
+                                   :command cmd
+                                   :connection-type 'pipe
+                                   :filter #'alonso--process-filter
+                                   :sentinel #'alonso--process-sentinel)))))
         (if old-lib
             (setenv "LLM_BRIDGE_ONNXRUNTIME_LIB" old-lib)
           (setenv "LLM_BRIDGE_ONNXRUNTIME_LIB" nil))))
