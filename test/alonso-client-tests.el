@@ -696,206 +696,108 @@ returned and ARGS the arguments it received."
         (alonso-aggressive-prune nil))
     (should (equal '("-provider" "google") (alonso--start-args)))))
 
-;;; `alonso--sandbox-args' and `alonso--start-command' — the sandbox wrapper
+;;; `alonso--sandbox-args' and `alonso--start-command' — the sandbox flags
 
-(ert-deftest alonso-client--sandbox-args-nil-when-disabled ()
+(ert-deftest alonso-client--sandbox-args-disable-flag-when-off ()
   :tags '(client)
-  (let ((alonso-sandbox-command ""))
-    (should (null (alonso--sandbox-args)))))
+  (let ((alonso-sandbox nil))
+    (should (equal '("-disable-sandbox") (alonso--sandbox-args)))))
 
 (ert-deftest alonso-client--sandbox-args-builds-and-expands-paths ()
   :tags '(client)
-  (let ((alonso-sandbox-command "caged")
-        (alonso-command "")
-        (alonso-sandbox-ro-paths '("/usr" "/etc"))
+  (let ((alonso-sandbox t)
+        (alonso-sandbox-ro-paths '("~/.gitconfig"))
         (alonso-sandbox-rw-paths '("~/mysrc/" "~/.llm-bridge"))
-        (alonso-sandbox-extra-args nil)
-        (alonso-sandbox-env-vars nil))
-    (cl-letf (((symbol-function 'executable-find) (lambda (_c) nil)))
-      (should (equal (list "--ro" "/usr"
-                           "--ro" "/etc"
-                           "--rw" (expand-file-name "~/mysrc/")
-                           "--rw" (expand-file-name "~/.llm-bridge"))
-                     (alonso--sandbox-args))))))
+        (alonso-sandbox-args nil))
+    (should (equal (list "-sandbox-ro" (expand-file-name "~/.gitconfig")
+                         "-sandbox-rw" (expand-file-name "~/mysrc/")
+                         "-sandbox-rw" (expand-file-name "~/.llm-bridge"))
+                   (alonso--sandbox-args)))))
 
-(ert-deftest alonso-client--start-command-without-sandbox-is-just-the-bridge ()
+(ert-deftest alonso-client--sandbox-args-skips-empty-entries ()
   :tags '(client)
-  (let ((alonso-sandbox-command "")
+  (let ((alonso-sandbox t)
+        (alonso-sandbox-ro-paths '(nil ""))
+        (alonso-sandbox-rw-paths '(""))
+        (alonso-sandbox-args nil))
+    (should (null (alonso--sandbox-args)))))
+
+(ert-deftest alonso-client--sandbox-args-appends-the-extra-args ()
+  :tags '(client)
+  ;; `alonso-sandbox-args' (escape hatch flags) go verbatim after the paths.
+  (let ((alonso-sandbox t)
+        (alonso-sandbox-ro-paths nil)
+        (alonso-sandbox-rw-paths '("~/mysrc/"))
+        (alonso-sandbox-args '("-caged-bin" "/opt/caged/bin/caged"
+                               "-sandbox-connect-port" "443")))
+    (should (equal (list "-sandbox-rw" (expand-file-name "~/mysrc/")
+                         "-caged-bin" "/opt/caged/bin/caged"
+                         "-sandbox-connect-port" "443")
+                   (alonso--sandbox-args)))))
+
+(ert-deftest alonso-client--start-command-without-sandbox-passes-the-disable-flag ()
+  :tags '(client)
+  (let ((alonso-sandbox nil)
         (alonso-command "llm-bridge") (alonso-provider "") (alonso-model "")
         (alonso-thinking 'unset) (alonso-reasoning-effort "")
         (alonso-logfile "") (alonso-prune nil) (alonso-aggressive-prune nil))
-    (should (equal '("llm-bridge") (alonso--start-command)))))
+    (should (equal '("llm-bridge" "-disable-sandbox")
+                   (alonso--start-command)))))
 
-(ert-deftest alonso-client--sandbox-args-appends-the-extra-paths ()
+(ert-deftest alonso-client--start-command-sandboxes-the-bridge-itself ()
   :tags '(client)
-  ;; The extra ro/rw lists are appended to the base ones (after expansion), so
-  ;; they can be set on their own without redefining the base lists.
-  (let ((alonso-sandbox-command "caged")
-        (alonso-command "")
-        (alonso-sandbox-ro-paths '("/usr"))
-        (alonso-sandbox-rw-paths '("~/.llm-bridge"))
-        (alonso-sandbox-extra-ro-paths '("~/.gitconfig"))
-        (alonso-sandbox-extra-rw-paths '("~/mysrc/"))
-        (alonso-sandbox-extra-args nil)
-        (alonso-sandbox-env-vars nil)
-        (alonso-logfile ""))
-    (cl-letf (((symbol-function 'executable-find) (lambda (_c) nil)))
-      (should (equal (list "--ro" "/usr"
-                           "--ro" (expand-file-name "~/.gitconfig")
-                           "--rw" (expand-file-name "~/.llm-bridge")
-                           "--rw" (expand-file-name "~/mysrc/"))
-                     (alonso--sandbox-args))))))
-
-(ert-deftest alonso-client--start-command-wraps-in-the-sandbox ()
-  :tags '(client)
-  (let ((alonso-sandbox-command "caged")
-        (alonso-sandbox-ro-paths '("/usr"))
+  ;; No launcher and no `--': the bridge gets the sandbox flags and applies
+  ;; them to itself.
+  (let ((alonso-sandbox t)
+        (alonso-sandbox-ro-paths '("~/.gitconfig"))
         (alonso-sandbox-rw-paths '("~/mysrc/"))
-        (alonso-sandbox-extra-args nil)
-        (alonso-sandbox-env-vars nil)
+        (alonso-sandbox-args nil)
         (alonso-command "llm-bridge") (alonso-provider "google") (alonso-model "")
         (alonso-thinking 'unset) (alonso-reasoning-effort "")
         (alonso-logfile "") (alonso-prune nil) (alonso-aggressive-prune nil))
-    (cl-letf (((symbol-function 'executable-find) (lambda (_c) nil)))
-      (should (equal (list "caged"
-                           "--ro" "/usr"
-                           "--rw" (expand-file-name "~/mysrc/")
-                           "--" "llm-bridge" "-provider" "google")
-                     (alonso--start-command))))))
+    (should (equal (list "llm-bridge" "-provider" "google"
+                         "-sandbox-ro" (expand-file-name "~/.gitconfig")
+                         "-sandbox-rw" (expand-file-name "~/mysrc/"))
+                   (alonso--start-command)))))
 
-(ert-deftest alonso-client--start-command-resolves-the-sandbox-command-path ()
+(ert-deftest alonso-client--start-process-sets-caged-disable-warnings ()
   :tags '(client)
-  (let ((alonso-sandbox-command "/usr/bin/caged")
-        (alonso-sandbox-ro-paths nil)
-        (alonso-sandbox-rw-paths nil)
-        (alonso-sandbox-extra-args nil)
-        (alonso-sandbox-env-vars nil)
-        (alonso-command "llm-bridge") (alonso-provider "") (alonso-model "")
-        (alonso-thinking 'unset) (alonso-reasoning-effort "")
-        (alonso-logfile "") (alonso-prune nil) (alonso-aggressive-prune nil))
-    (cl-letf (((symbol-function 'executable-find) (lambda (_c) nil)))
-      (should (equal (expand-file-name "/usr/bin/caged")
-                     (car (alonso--start-command)))))))
-
-(ert-deftest alonso-client--sandbox-args-includes-the-binary-directories ()
-  :tags '(client)
-  ;; The bridge and the sandbox live outside the configured --ro list; the
-  ;; sandbox must still be allowed to exec them, so their dirs are added.
-  (let ((alonso-sandbox-command "caged")
-        (alonso-command "llm-bridge")
-        (alonso-sandbox-ro-paths '("/usr"))
-        (alonso-sandbox-rw-paths nil)
-        (alonso-sandbox-extra-args nil)
-        (alonso-sandbox-env-vars nil))
-    (cl-letf (((symbol-function 'executable-find)
-               (lambda (c) (pcase c
-                             ("llm-bridge" "/home/juca/local/bin/llm-bridge")
-                             ("caged" "/home/juca/.local/bin/caged")))))
-      (should (equal (list "--ro" "/usr"
-                           "--ro" "/home/juca/local/bin/"
-                           "--ro" "/home/juca/.local/bin/")
-                     (alonso--sandbox-args))))))
-
-(ert-deftest alonso-client--sandbox-args-includes-the-logfile-directory ()
-  :tags '(client)
-  ;; The bridge cannot create/write the log file unless its directory is
-  ;; writable, so the logfile's directory is added as --rw.
-  (let ((alonso-sandbox-command "caged")
-        (alonso-command "")
-        (alonso-sandbox-ro-paths '("/usr"))
-        (alonso-sandbox-rw-paths '("~/mysrc/"))
-        (alonso-sandbox-extra-args nil)
-        (alonso-sandbox-env-vars nil)
-        (alonso-logfile "/tmp/llm-bridge.log"))
-    (cl-letf (((symbol-function 'executable-find) (lambda (_c) nil)))
-      (should (equal (list "--ro" "/usr"
-                           "--rw" (expand-file-name "~/mysrc/")
-                           "--rw" "/tmp/")
-                     (alonso--sandbox-args))))))
-
-(ert-deftest alonso-client--sandbox-args-does-not-duplicate-the-logfile-directory ()
-  :tags '(client)
-  (let ((alonso-sandbox-command "caged")
-        (alonso-command "")
-        (alonso-sandbox-ro-paths nil)
-        (alonso-sandbox-rw-paths '("/tmp/" "~/mysrc/"))
-        (alonso-sandbox-extra-args nil)
-        (alonso-sandbox-env-vars nil)
-        (alonso-logfile "~/mysrc/foo.log"))
-    (cl-letf (((symbol-function 'executable-find) (lambda (_c) nil)))
-      (should (equal (list "--rw" "/tmp/"
-                           "--rw" (expand-file-name "~/mysrc/"))
-                     (alonso--sandbox-args))))))
-
-(ert-deftest alonso-client--sandbox-args-appends-the-extra-args-and-env ()
-  :tags '(client)
-  ;; `alonso-sandbox-extra-args' (network scopes, ports, ...) go after the
-  ;; paths and are followed by one `--env NAME=VALUE' per variable that is
-  ;; actually set in the environment.
-  (let ((alonso-sandbox-command "caged")
-        (alonso-command "")
-        (alonso-sandbox-ro-paths '("/usr"))
-        (alonso-sandbox-rw-paths nil)
-        (alonso-sandbox-extra-args '("--allow-network-sockets"
-                                     "--allow-connect-port" "443"))
-        (alonso-sandbox-env-vars '("ALONSO_TEST_SET" "ALONSO_TEST_UNSET"))
-        (old (getenv "ALONSO_TEST_SET")))
-    (unwind-protect
-        (progn
-          (setenv "ALONSO_TEST_SET" "value")
-          (setenv "ALONSO_TEST_UNSET" nil)
-          (cl-letf (((symbol-function 'executable-find) (lambda (_c) nil)))
-            (should (equal (list "--ro" "/usr"
-                                 "--allow-network-sockets"
-                                 "--allow-connect-port" "443"
-                                 "--env" "ALONSO_TEST_SET=value")
-                           (alonso--sandbox-args)))))
-      (setenv "ALONSO_TEST_SET" old))))
-
-(ert-deftest alonso-client--sandbox-env-args-skips-unset-variables ()
-  :tags '(client)
-  (let ((alonso-sandbox-env-vars '("ALONSO_TEST_UNSET")))
-    (should (null (alonso--sandbox-env-args)))))
-
-(ert-deftest alonso-client--start-process-applies-the-launcher-env ()
-  :tags '(client)
-  ;; `alonso-sandbox-launcher-env' (e.g. CAGED_DISABLE_WARNINGS) must be set in
-  ;; the launcher's environment during the spawn and restored afterwards.
-  (let ((old (getenv "ALONSO_TEST_LAUNCHER"))
+  ;; The bridge forwards the environment it inherits to the caged instance it
+  ;; re-executes itself under, so CAGED_DISABLE_WARNINGS silences caged's ABI
+  ;; warning (which would arrive on stderr and look like a launch failure).  It
+  ;; is set only around the spawn.
+  (let ((old (getenv "CAGED_DISABLE_WARNINGS"))
         (alonso-process nil) (alonso-line-buffer "")
         (alonso-onnxruntime-lib "")
-        (alonso-sandbox-command "caged")
-        (alonso-sandbox-ro-paths '("/usr"))
+        (alonso-sandbox t)
+        (alonso-sandbox-ro-paths nil)
         (alonso-sandbox-rw-paths nil)
-        (alonso-sandbox-extra-args nil)
-        (alonso-sandbox-env-vars nil)
-        (alonso-sandbox-launcher-env '(("ALONSO_TEST_LAUNCHER" . "1")))
+        (alonso-sandbox-args nil)
         (alonso-command "llm-bridge") (alonso-provider "") (alonso-model "")
         (alonso-thinking 'unset) (alonso-reasoning-effort "")
         (alonso-logfile "") (alonso-prune nil) (alonso-aggressive-prune nil)
         seen)
     (unwind-protect
         (progn
-          (setenv "ALONSO_TEST_LAUNCHER" nil)
+          (setenv "CAGED_DISABLE_WARNINGS" nil)
           (cl-letf (((symbol-function 'make-process)
-                     (lambda (&rest _) (setq seen (getenv "ALONSO_TEST_LAUNCHER")) 'proc))
-                    ((symbol-function 'executable-find) (lambda (_c) nil)))
+                     (lambda (&rest _)
+                       (setq seen (getenv "CAGED_DISABLE_WARNINGS"))
+                       'proc)))
             (alonso--start-process))
           (should (and (equal "1" seen)
-                       (null (getenv "ALONSO_TEST_LAUNCHER")))))
-      (setenv "ALONSO_TEST_LAUNCHER" old))))
+                       (null (getenv "CAGED_DISABLE_WARNINGS")))))
+      (setenv "CAGED_DISABLE_WARNINGS" old))))
 
-(ert-deftest alonso-client--start-process-passes-the-sandboxed-command ()
+(ert-deftest alonso-client--start-process-passes-the-sandbox-flags ()
   :tags '(client)
   (let ((old (getenv "LLM_BRIDGE_ONNXRUNTIME_LIB"))
         (alonso-process nil) (alonso-line-buffer "")
         (alonso-onnxruntime-lib "")
-        (alonso-sandbox-command "caged")
-        (alonso-sandbox-ro-paths '("/usr"))
+        (alonso-sandbox t)
+        (alonso-sandbox-ro-paths nil)
         (alonso-sandbox-rw-paths '("~/mysrc/"))
-        (alonso-sandbox-extra-args nil)
-        (alonso-sandbox-env-vars nil)
-        (alonso-sandbox-launcher-env nil)
+        (alonso-sandbox-args nil)
         (alonso-command "llm-bridge") (alonso-provider "") (alonso-model "")
         (alonso-thinking 'unset) (alonso-reasoning-effort "")
         (alonso-logfile "") (alonso-prune nil) (alonso-aggressive-prune nil)
@@ -904,13 +806,10 @@ returned and ARGS the arguments it received."
         (progn
           (setenv "LLM_BRIDGE_ONNXRUNTIME_LIB" nil)
           (cl-letf (((symbol-function 'make-process)
-                     (lambda (&rest args) (setq captured args) 'proc))
-                    ((symbol-function 'executable-find) (lambda (_c) nil)))
+                     (lambda (&rest args) (setq captured args) 'proc)))
             (alonso--start-process))
-          (should (equal (list "caged"
-                               "--ro" "/usr"
-                               "--rw" (expand-file-name "~/mysrc/")
-                               "--" "llm-bridge")
+          (should (equal (list "llm-bridge"
+                               "-sandbox-rw" (expand-file-name "~/mysrc/"))
                          (plist-get captured :command))))
       (setenv "LLM_BRIDGE_ONNXRUNTIME_LIB" old))))
 
@@ -930,7 +829,7 @@ returned and ARGS the arguments it received."
         (alonso-command "llm-bridge") (alonso-provider "") (alonso-model "")
         (alonso-thinking 'unset) (alonso-reasoning-effort "")
         (alonso-logfile "") (alonso-prune nil) (alonso-aggressive-prune nil)
-        (alonso-sandbox-command "")
+        (alonso-sandbox nil)
         captured)
     (unwind-protect
         (progn
@@ -950,7 +849,7 @@ returned and ARGS the arguments it received."
         (alonso-command "llm-bridge") (alonso-provider "") (alonso-model "")
         (alonso-thinking 'unset) (alonso-reasoning-effort "")
         (alonso-logfile "") (alonso-prune nil) (alonso-aggressive-prune nil)
-        (alonso-sandbox-command "")
+        (alonso-sandbox nil)
         seen)
     (unwind-protect
         (progn

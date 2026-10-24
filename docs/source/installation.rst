@@ -23,64 +23,46 @@ Clone the repository and put it on the load path, then require it::
 (``alonso-client.el``), the UI shell (``alonso-ui.el``) and the rendering
 pieces (``alonso-markdown.el``, ``alonso-image.el``, ``alonso-tools.el``).
 
-Optional sandbox
-----------------
+Sandbox
+-------
 
-The bridge subprocess can optionally be wrapped in a sandbox launcher, such as
-``caged`` (a small Landlock-based process sandbox, see the *alonso-cage*
-project).  Set ``alonso-sandbox-command`` to the launcher and the bridge is
-started as::
+The bridge sandboxes **itself**; the client does not wrap it.  By default the
+bridge re-executes itself under ``caged`` (a small Landlock + seccomp sandbox,
+see the `caged documentation <https://docs.poraodojuca.dev/caged>`_) at
+startup, and runs the external processes it spawns (the ``shell``/``grep``
+tools and the hooks) under a stricter policy with no environment, no IPC and no
+network.
 
-   caged [--ro DIR]... [--rw DIR]... [EXTRA-ARGS]... [--env NAME=VALUE]... -- llm-bridge <bridge-args>
+``alonso-sandbox`` (default ``t``) controls it: ``nil`` passes
+``-disable-sandbox`` and the bridge runs unconfined.  Either way ``caged`` has
+to be installed and found on ``exec-path``, or its path passed through
+``alonso-sandbox-args``.
 
-The read-only and read-write directories come from ``alonso-sandbox-ro-paths``
-(default ``/usr``, ``/bin``, ``/lib``, ``/etc``) and
-``alonso-sandbox-rw-paths`` (default ``~/.cache/llm-bridge``,
-``~/.llm-bridge``, ``~/.local/share/llm-bridge``, ``/dev/null``,
-``/dev/urandom``).  Two extra lists, ``alonso-sandbox-extra-ro-paths`` and
-``alonso-sandbox-extra-rw-paths`` (both empty by default), are appended to
-those, so you can grant more paths from your init file without redefining the
-base lists.  The
-directories holding the
-bridge and the sandbox binaries are added as ``--ro`` automatically, so the
-sandbox can ``exec`` them wherever they are installed (e.g. a bridge under
-``~/.local/bin``).  When ``alonso-logfile`` is set, the directory holding the
-log file is added as ``--rw`` automatically, so the bridge can create/write it.
-Two ``/dev`` devices are in the default read-write list: ``/dev/null``, because
-the bridge lets the Go runtime open it for the stdin of the tools it spawns
-(``shell``, ``grep``); and ``/dev/urandom``, because spawned tools that create
-temporary files or tokens (e.g. ``git`` via ``mkstemp``, TLS) read random bytes
-from it.  Without either one the tool fails with ``permission denied`` or
-``unable to get random bytes``.
-The sandbox is **off by default**
-(``alonso-sandbox-command`` is empty): the bridge is started directly unless
-you configure it.
+Two lists tell the bridge where the files are:
 
-Three settings cover the extra layers of ``caged`` 0.2.0, which governs
-network, environment and rlimits on top of the filesystem:
+- ``alonso-sandbox-rw-paths`` (default ``("~/mysrc")``), one ``-sandbox-rw``
+  per directory: what the bridge and its tools may read and write.  The bridge
+  grants no project directory on its own (its sandbox is frozen at startup
+  while the project changes at runtime), so the projects root belongs here.
+  Anything outside these paths is denied to the tools by the kernel
+  (``EACCES``), which shows up as the tool failing, not as a sandbox error.
+- ``alonso-sandbox-ro-paths`` (default ``nil``), one ``-sandbox-ro`` per
+  directory: extra read-only paths such as ``~/.gitconfig``.  The bridge
+  already grants the system trees (``/usr``, ``/lib``, ``/lib64``, ``/bin``,
+  ``/etc``), ``/dev/urandom``, the knowledge-base assets
+  (``~/.cache/llm-bridge``) and the global context and hooks
+  (``~/.llm-bridge``).
 
-- ``alonso-sandbox-extra-args`` (default ``--allow-network-sockets
-  --allow-connect-port 443``) is emitted verbatim after the paths.  Without
-  ``--allow-network-sockets`` the bridge cannot even resolve DNS (the resolver
-  opens a netlink socket, and ``socket`` fails with EACCES); without the port
-  rule Landlock blocks the provider's HTTPS connection.  Add one
-  ``--allow-connect-port`` per extra port (a proxy, a local server).  Set it
-  to ``nil`` for a launcher that does not understand these flags.
-- ``alonso-sandbox-env-vars`` is a list of variable *names* passed through as
-  ``--env NAME=VALUE``, only for the ones that are set when the bridge is
-  launched.  The default is the set the bridge reads (``DEEPSEEK_API_KEY``,
-  ``GOOGLE_*``/``GEMINI_*``, the ``URL``/``MODEL`` overrides,
-  ``KNOWLEDGE_BASE``, ``LLM_BRIDGE_KB_*``,
-  ``LLM_BRIDGE_ONNXRUNTIME_LIB``, ``LLM_BRIDGE_PATH``, ``NO_COLOR``).
-  ``caged`` 0.2.0 wipes the child environment by default (only ``PATH``,
-  ``HOME``, ``LANG``, ``LANGUAGE`` and the ``LC_*`` variables survive), so the
-  API key and the rest must be named here.  Passing variables one by one,
-  instead of ``--keep-env``, keeps the rest of the cleanup: ``SSH_AUTH_SOCK``,
-  ``DISPLAY``, ``XAUTHORITY`` and ``DBUS_*`` stay out of the sandbox.
-- ``alonso-sandbox-launcher-env`` (an alist, default
-  ``(("CAGED_DISABLE_WARNINGS" . "1"))``) sets variables in the *launcher's*
-  own environment around the spawn, restoring them afterwards.  It silences
-  ``caged``'s ``warning: Landlock ABI 6 does not support some features``,
-  which otherwise shows up on stderr and is reported as a launch failure.  It
-  cannot go through ``--env``: the launcher reads it before building the
-  child's environment.
+``alonso-sandbox-args`` (default ``nil``) is passed verbatim to the bridge
+after the paths, for sandbox flags that have no dedicated setting, e.g.
+``("-caged-bin" "/opt/caged/bin/caged")``.
+
+Every path has to exist when the bridge starts: its sandbox opens each one
+while building the policy, and a missing path makes it fail at startup.
+
+The environment is not filtered by the client any more: the bridge keeps its
+own environment (the API key, the provider URL, the KB settings) and runs the
+tools without it.  The only variable the client sets around the spawn is
+``CAGED_DISABLE_WARNINGS=1``, which the bridge forwards to ``caged`` to keep
+the ``warning: Landlock ABI N does not support some features`` line off stderr
+(the client treats any stderr line as a launch failure).

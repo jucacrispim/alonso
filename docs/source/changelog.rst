@@ -7,6 +7,39 @@ The format is based on `Keep a Changelog
 <https://keepachangelog.com/en/1.1.0/>`_, and this project adheres to
 `Semantic Versioning <https://semver.org/spec/v2.0.0.html>`_.
 
+Unreleased
+----------
+
+Changed
+~~~~~~~
+
+- The client no longer wraps the bridge in a sandbox launcher: the **bridge**
+  applies the sandbox to itself (it re-executes itself under ``caged`` and
+  runs its tools under a stricter policy).  ``alonso-sandbox-command`` is gone;
+  the new ``alonso-sandbox`` (default ``t``) makes the client pass the bridge's
+  own flags — ``-sandbox-ro``/``-sandbox-rw``, or ``-disable-sandbox`` when it
+  is ``nil``.
+- ``alonso-sandbox-ro-paths`` (default ``nil``) and ``alonso-sandbox-rw-paths``
+  (default ``("~/mysrc")``) are now passed to the bridge as
+  ``-sandbox-ro``/``-sandbox-rw``.  The bridge already grants the system trees,
+  ``/dev/urandom``, the KB assets and ``~/.llm-bridge``, so the lists only add
+  the projects root and extras.
+- ``alonso-sandbox-extra-args`` became ``alonso-sandbox-args``: the bridge's
+  sandbox flags, passed verbatim after the paths.
+- The client no longer filters the environment: the bridge keeps its own (the
+  API key and the rest) and runs the tools without it.  ``CAGED_DISABLE_WARNINGS=1``
+  is still set around the spawn, because the bridge forwards it to ``caged``.
+- The directories holding the binaries and the log file are no longer added by
+  the client: the bridge grants itself the binary directories, creates the log
+  file and grants that file only (never its directory).
+
+Removed
+~~~~~~~
+
+- ``alonso-sandbox-command``, ``alonso-sandbox-extra-ro-paths``,
+  ``alonso-sandbox-extra-rw-paths``, ``alonso-sandbox-env-vars`` and
+  ``alonso-sandbox-launcher-env``.
+
 0.4.0 (2026-10-21)
 ------------------
 
