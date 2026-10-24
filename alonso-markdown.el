@@ -154,6 +154,12 @@ the base face (monospaced, no colors).  Has no effect when
   :type 'boolean
   :group 'alonso)
 
+;; The defcustom below is initialized by calling `alonso--set-md-code-font',
+;; which is why it has to come after these helpers.  Declare the variable here
+;; (with no value, so the defcustom remains the single source of truth) to keep
+;; the helpers from triggering a free-variable warning.
+(defvar alonso-md-code-font)
+
 (defun alonso--apply-md-code-font ()
   "Apply `alonso-md-code-font' to `alonso-md-code-face'.
 When `alonso-md-code-font' is nil the code face has no explicit font

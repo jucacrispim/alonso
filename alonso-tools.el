@@ -245,6 +245,11 @@ trust-scope menu (run every time from then on)."
       ((or ?n ?N) 'deny)
       (_ 'trust))))
 
+;; The menu is a `transient-define-prefix' defined further down (it calls back
+;; into the functions above), so declare it here to keep the batch
+;; confirmation path from triggering an unknown-function warning.
+(declare-function alonso--trust-menu "alonso-tools")
+
 (defun alonso--trust-pause (name input id rest denied)
   "Pause batch confirmation for tool NAME/INPUT/ID to pick a trust scope.
 Saves the remaining REST of the queue and the DENIED flag in

@@ -125,7 +125,8 @@ its provider), so these are rarely needed."
   :group 'alonso)
 
 (defcustom alonso-provider ""
-  "Optional provider override (passed as -provider flag).  E.g. \"deepseek\" or \"google\".  Empty = default."
+  "Optional provider override (passed as the -provider flag).
+E.g. \"deepseek\" or \"google\".  Empty = default."
   :type 'string
   :group 'alonso)
 
@@ -170,6 +171,13 @@ when no log file is given is to disable logging entirely).  Empty (the
 default) starts the bridge without a log file, so nothing is logged."
   :type 'file
   :group 'alonso)
+
+;; `alonso-prune' and `alonso-aggressive-prune' reset each other from their
+;; :set functions, so one of the two is always defined after the one that
+;; touches it.  Declare the later one here (with no value, so the defcustom
+;; below remains the single source of truth) to keep the :set from triggering
+;; a free-variable warning.
+(defvar alonso-aggressive-prune)
 
 (defcustom alonso-prune nil
   "Whether to enable history pruning in the bridge (passed as the -prune flag).
