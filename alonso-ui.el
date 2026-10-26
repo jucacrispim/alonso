@@ -125,6 +125,16 @@ finished.  Add functions with `add-hook'."
   "Face for error lines."
   :group 'alonso)
 
+(defface alonso-risk-face
+  '((t (:inherit warning :bold t)))
+  "Face for a `medium' risk warning in a tool confirmation."
+  :group 'alonso)
+
+(defface alonso-risk-high-face
+  '((t (:inherit error :bold t)))
+  "Face for a `high' risk (or tainted) warning in a tool confirmation."
+  :group 'alonso)
+
 (defface alonso-command-face
   '((t (:inherit font-lock-string-face :bold t)))
   "Face for the command/pattern/path highlighted in a tool confirmation."

@@ -70,19 +70,25 @@ file tools the path.  Used in the confirmation question prompt."
     (or (alonso--hval input "path") ""))
    (t "")))
 
+(defun alonso--risk-tag (risk)
+  "Return the confirmation tag for RISK, or an empty string for `low'.
+Upper case on purpose: the tag has to be seen while the question is read,
+not skimmed over as one more word in a sentence."
+  (pcase risk
+    ("high" " [HIGH RISK]")
+    ("medium" " [MEDIUM RISK]")
+    (_ "")))
+
 (defun alonso--confirm-question (name input &optional risk)
   "Build the minibuffer confirmation question for tool NAME with INPUT.
 Prefixes the tool's unicode icon and, when available, shows the command
 \(`shell'), pattern (`grep'/`glob'), URL (`curl') or path (file tools)
 right after the name, e.g. \"🖥 Run tool: shell · ps aux? \".  When RISK is
-\"high\" or \"medium\" it is appended as a tag, so the question states the
-danger before the one-keystroke answer.  The minibuffer itself cannot render
-colors, so the detail is shown as plain text here."
+\"high\" or \"medium\" its tag (`alonso--risk-tag') is appended, so the
+question states the danger before the one-keystroke answer.  The minibuffer
+itself cannot render colors, so the detail and the tag are plain text here."
   (let ((detail (alonso--tool-detail-string name input))
-        (tag (pcase risk
-               ("high" " [high risk]")
-               ("medium" " [medium risk]")
-               (_ ""))))
+        (tag (alonso--risk-tag risk)))
     (if (string-empty-p detail)
         (format "%s Run tool: %s%s? " (alonso--tool-icon name) name tag)
       (format "%s Run tool: %s · %s%s? "
@@ -166,14 +172,17 @@ to block the call by itself."
             parts))
     (pcase risk
       ("high"
-       (push (propertize "  ⚠ high risk (destructive, remote or privileged)\n"
-                         'face 'alonso-error-face)
+       (push (propertize "  ⚠ HIGH RISK — destructive, remote or privileged\n"
+                         'face 'alonso-risk-high-face)
              parts))
       ("medium"
-       (push "  ⚠ medium risk\n" parts)))
+       (push (propertize "  ⚠ MEDIUM RISK — review before running\n"
+                         'face 'alonso-risk-face)
+             parts)))
     (when tainted
-      (push (propertize "  ⚠ repeats content fetched earlier (possible injection)\n"
-                        'face 'alonso-error-face)
+      (push (propertize (concat "  ⚠ TAINTED — repeats content fetched "
+                                "earlier (possible injection)\n")
+                        'face 'alonso-risk-high-face)
             parts))
     (when parts
       (mapconcat #'identity (nreverse parts) ""))))
@@ -225,7 +234,9 @@ the taint warning are shown between the header and the parameters.
 Read-only tools (which run without confirmation) get a title line with the
 tool's icon and name, e.g. \"📄 read\".  Mutating tools (which ask for an
 individual confirmation) show the confirmation question line right away —
-the tool's icon and the `Run tool: <name>?' prompt — followed by
+the tool's icon, the `Run tool: <name>' prompt and, when the risk is not
+`low', its tag (`[HIGH RISK]') so the danger is on the line that later
+carries the `[allowed]' outcome — followed by
 the parameters beneath it.  The `[allowed]' / `[denied]' prefix is later
 prepended to the front of that same question line by
 `alonso--record-tool-confirmation' once the user answers, so the
@@ -234,11 +245,12 @@ buffer position of the visible title/parameters."
   (alonso--render-answer)
   (alonso--thinking-placeholder-end)
   (let* ((read-only (alonso--tool-read-only-p name input))
+         (tag (alonso--risk-tag (plist-get meta :risk)))
          (header (if read-only
                      (format "\n%s %s\n" (alonso--tool-icon name) name)
                    (concat "\n"
                            (alonso--tool-icon name)
-                           " Run tool: " name
+                           " Run tool: " name tag
                            "? \n")))
          (pos (alonso--insert-propertized header)))
     ;; point at the start of the visible line (title or question), where the

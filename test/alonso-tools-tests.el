@@ -1222,19 +1222,36 @@
 (ert-deftest alonso-tools--confirm-meta-high-risk-is-an-error-line ()
   :tags '(tools)
   (let ((s (alonso--format-confirm-meta '(:risk "high"))))
-    (should (string-match-p "high risk" s))
-    (should (eq 'alonso-error-face (get-text-property 0 'face s)))))
+    (should (string-match-p "HIGH RISK" s))
+    (should (eq 'alonso-risk-high-face (get-text-property 0 'face s)))))
 
-(ert-deftest alonso-tools--confirm-meta-medium-risk ()
+(ert-deftest alonso-tools--confirm-meta-medium-risk-is-a-warning-line ()
   :tags '(tools)
-  (should (string-match-p "medium risk"
-                          (alonso--format-confirm-meta '(:risk "medium")))))
+  (let ((s (alonso--format-confirm-meta '(:risk "medium"))))
+    (should (string-match-p "MEDIUM RISK" s))
+    (should (eq 'alonso-risk-face (get-text-property 0 'face s)))))
 
 (ert-deftest alonso-tools--confirm-meta-tainted-warns ()
   :tags '(tools)
   (let ((s (alonso--format-confirm-meta '(:tainted t))))
+    (should (string-match-p "TAINTED" s))
     (should (string-match-p "possible injection" s))
-    (should (eq 'alonso-error-face (get-text-property 0 'face s)))))
+    (should (eq 'alonso-risk-high-face (get-text-property 0 'face s)))))
+
+;; The header line carries the same tag as the question, so the risk is on the
+;; line that later gets the `[allowed]' / `[denied]' outcome.
+
+(ert-deftest alonso-tools--show-tool-call-header-carries-the-risk-tag ()
+  :tags '(tools)
+  (let* ((buf (alonso-tools-tests--alonso-buffer))
+         (start (with-current-buffer buf (point-max))))
+    (alonso--show-tool-call
+     "call_tag" "shell" (alonso-tools-tests--input "command" "git commit -m x")
+     '(:risk "medium"))
+    (let ((text (with-current-buffer buf
+                  (buffer-substring-no-properties start (point-max)))))
+      (should (string-match-p
+               (regexp-quote "🖥 Run tool: shell [MEDIUM RISK]?") text)))))
 
 ;; The warnings are inserted between the header and the parameters.
 
@@ -1248,7 +1265,7 @@
     (let ((text (with-current-buffer buf
                   (buffer-substring-no-properties start (point-max)))))
       (should (and (string-match-p (regexp-quote "runs 2 commands:") text)
-                   (string-match-p "high risk" text)
+                   (string-match-p "HIGH RISK" text)
                    (string-match-p "possible injection" text))))))
 
 ;; A `knowledge' read is displayed as a read-only title line; a write asks.
@@ -1461,7 +1478,7 @@
 
 (ert-deftest alonso-tools--confirm-question-medium-risk-tag ()
   :tags '(tools)
-  (should (equal "🔧 Run tool: foo [medium risk]? "
+  (should (equal "🔧 Run tool: foo [MEDIUM RISK]? "
                  (alonso--confirm-question "foo" (make-hash-table) "medium"))))
 
 (ert-deftest alonso-tools--confirm-question-low-risk-omits-the-tag ()
@@ -1474,7 +1491,7 @@
   (let ((alonso--confirm-context
          (list :name "shell" :risk "high"
                :input (alonso-tools-tests--input "command" "rm -rf /"))))
-    (should (string-match-p "\\[high risk\\]"
+    (should (string-match-p "\\[HIGH RISK\\]"
                             (alonso--confirm-menu-question)))))
 
 (ert-deftest alonso-tools--confirm-risk-reads-the-context ()
@@ -1510,7 +1527,7 @@
               ((symbol-function 'alonso--confirm-answer)
                (lambda (a) (setq answer a))))
       (alonso--confirm-ask "shell" (alonso-tools-tests--input "command" "rm -rf /")))
-    (should (and (string-match-p "high risk" typed) (eq answer 'run)))))
+    (should (and (string-match-p "HIGH RISK" typed) (eq answer 'run)))))
 
 (ert-deftest alonso-tools--confirm-ask-high-risk-abort-denies ()
   :tags '(tools)
