@@ -7,6 +7,18 @@ The format is based on `Keep a Changelog
 <https://keepachangelog.com/en/1.1.0/>`_, and this project adheres to
 `Semantic Versioning <https://semver.org/spec/v2.0.0.html>`_.
 
+Unreleased
+----------
+
+Changed
+~~~~~~~
+
+- The mode line moved the prompt's context to the input buffer: the model and
+  the session token usage (``[<model>] [↑<in> ↓<out> ⚡<hit>/<miss>]`` plus the
+  context dial) now sit in the ``alonso-chat`` bar, next to what is being typed,
+  instead of above it in the conversation's.  The conversation bar keeps the
+  trust grants and the status/spinner, which stays its last fragment.
+
 0.5.0 (2026-10-26)
 ------------------
 

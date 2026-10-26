@@ -201,14 +201,17 @@ As a side effect the project's ``.dir-locals.el`` is applied (respecting
 The mode line
 -------------
 
-The conversation buffer's mode line (which hides the usual modes and
-line/column info) shows::
+The input buffer's mode line (which hides the usual modes and line/column info)
+shows the prompt's context — the model and the session token usage — right next
+to the prompt being typed::
 
-   [<model>] [↑<in> ↓<out> ⚡<hit>/<miss>] <dial> <pct>% (<used>/<window>) <status>
+   alonso-chat [<model>] [↑<in> ↓<out> ⚡<hit>/<miss>] <dial> <pct>% (<used>/<window>) [<overrides>]
 
-The last group is the braille spinner while a turn is running, ``alonso…`` for a
-turn without a spinner, and empty when idle.  The session token block ``⚡`` only
-appears when ``hit + miss > 0``.
+The session token block ``⚡`` only appears when ``hit + miss > 0``, and the
+request overrides (e.g. `` [thinking=on effort=high]``) only when one is set for
+the next prompt.
 
-The input buffer's mode line shows only its name plus the request overrides for
-the next prompt, e.g. `` [thinking=on effort=high]`` (empty when none is set).
+The conversation buffer's mode line keeps only the session state that is not
+about the prompt: its name, the active trust grants (``🔓shell``) and, as the
+very last group, the status — the braille spinner while a turn is running
+(``alonso…`` for a turn without a spinner) and empty when idle.

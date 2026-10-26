@@ -403,7 +403,9 @@ turn_end/error/cancelled), or `alonso…' during a turn with no spinner."
 
 (defun alonso--mode-line-model ()
   "Return the mode-line fragment with the model of the current session.
-Empty until the first `turn_end' reports a model."
+Empty until the first `turn_end' reports a model.  It is shown in the input
+buffer's mode line, next to the prompt (see
+`alonso--setup-input-mode-line')."
   (if alonso-session-model
       (propertize (format " [%s]" alonso-session-model)
                   'help-echo "Model used in the current session")
@@ -668,20 +670,18 @@ script's combined output is inserted as plain text."
       ;; never leaves a lone window behind (see `alonso--on-pair-buffer-killed').
       (add-hook 'kill-buffer-hook #'alonso--on-pair-buffer-killed nil t)
       ;; The conversation bar shows only what matters: the buffer name, the
-      ;; session model, the session token usage and, at the very end, the
-      ;; status/spinner.  Drop the modes construct (it would only render
-      ;; "(Fundamental LB)", noise for a chat log).
+      ;; session trust grants and, at the very end, the status/spinner.  The
+      ;; model and the session token usage belong to the input bar, next to
+      ;; the prompt being typed (see `alonso--setup-input-mode-line'), and are
+      ;; dropped here — including on a buffer set up by an older version.
+      ;; Drop the modes construct (it would only render "(Fundamental LB)",
+      ;; noise for a chat log).
       (setq-local mode-line-modes "")
-      (unless (cl-member '(:eval (alonso--mode-line-model))
-                         mode-line-misc-info :test #'equal)
-        (setq-local mode-line-misc-info
-                    (append mode-line-misc-info
-                            (list '(:eval (alonso--mode-line-model))))))
-      (unless (cl-member '(:eval (alonso--mode-line-session))
-                         mode-line-misc-info :test #'equal)
-        (setq-local mode-line-misc-info
-                    (append mode-line-misc-info
-                            (list '(:eval (alonso--mode-line-session))))))
+      (setq-local mode-line-misc-info
+                  (cl-remove-if (lambda (el)
+                                  (member el (list '(:eval (alonso--mode-line-model))
+                                                   '(:eval (alonso--mode-line-session)))))
+                                mode-line-misc-info))
       (unless (cl-member '(:eval (alonso--mode-line-trust))
                          mode-line-misc-info :test #'equal)
         (setq-local mode-line-misc-info
@@ -938,7 +938,9 @@ Shows tokens sent (↑, input), tokens received (↓, output) and the
 prompt-cache hit/miss totals (⚡, shown only when the provider reports any)
 inside brackets; the context usage (a dial glyph that fills as the window is
 consumed, then the percentage and used/window tokens) follows outside them,
-e.g. \" [↑12 ↓8 ⚡900/124] ◑ 42% (420k/1M)\"."
+e.g. \" [↑12 ↓8 ⚡900/124] ◑ 42% (420k/1M)\".  It is shown in the input
+buffer's mode line, next to the prompt (see
+`alonso--setup-input-mode-line')."
   (let* ((hit alonso-session-cache-hit-tokens)
          (miss alonso-session-cache-miss-tokens)
          (cache (if (> (+ hit miss) 0)
@@ -962,9 +964,10 @@ e.g. \" [↑12 ↓8 ⚡900/124] ◑ 42% (420k/1M)\"."
 (defun alonso--mode-line-request ()
   "Return the mode-line fragment with the thinking/effort overrides.
 Shows only the thinking and effort overrides set for the next prompt, e.g.
-\" [thinking=on effort=high]\".  The model lives in the conversation bar
-\(see `alonso--mode-line-model') and the provider is not shown anywhere in
-the mode-line, so neither is repeated here.  Empty when none is set."
+\" [thinking=on effort=high]\".  The model and the session token usage live
+in the same bar (see `alonso--setup-input-mode-line') and the provider is not
+shown anywhere in the mode-line, so neither is repeated here.  Empty when
+none is set."
   (with-current-buffer (alonso--request-buffer)
     (let (parts)
       (pcase alonso-request-thinking
@@ -979,14 +982,20 @@ the mode-line, so neither is repeated here.  Empty when none is set."
 
 (defun alonso--setup-input-mode-line ()
   "Set up the input buffer's mode-line (idempotent).
-Installs the thinking/effort override indicator and strips the default
-constructs so the bar shows just the buffer name plus that indicator:
-`mode-line-modes' (which would render \"(Fundamental LBIn)\") and
-`mode-line-position' (line/column/%/\"All\").  Creates the input buffer if
-it does not exist yet (on a fresh open).  The session token usage lives in
-the conversation buffer's mode-line instead (see `alonso--get-buffer')."
+Installs the model, the session token usage and the thinking/effort override
+indicators, and strips the default constructs so the bar shows just the
+buffer name plus those fragments: `mode-line-modes' (which would render
+\"(Fundamental LBIn)\") and `mode-line-position' (line/column/%/\"All\").
+The fragments are re-appended in order, so repeated setups (or a buffer set
+up by an older version, where the overrides came first) always end with the
+same bar.  Creates the input buffer if it does not exist yet (on a fresh
+open).  The trust grants and the status/spinner stay in the conversation
+buffer's mode-line (see `alonso--get-buffer')."
   (let ((buf (or (get-buffer alonso-input-buffer-name)
-                 (get-buffer-create alonso-input-buffer-name))))
+                 (get-buffer-create alonso-input-buffer-name)))
+        (fragments (list '(:eval (alonso--mode-line-model))
+                         '(:eval (alonso--mode-line-session))
+                         '(:eval (alonso--mode-line-request)))))
     (with-current-buffer buf
       ;; Killing this buffer must also close the conversation window, so the
       ;; pair never leaves a lone window behind (see
@@ -996,11 +1005,10 @@ the conversation buffer's mode-line instead (see `alonso--get-buffer')."
       ;; (line/column/%/\"All\") — the input bar should show only its name.
       (setq-local mode-line-modes "")
       (setq-local mode-line-position nil)
-      (unless (cl-member '(:eval (alonso--mode-line-request))
-                         mode-line-misc-info :test #'equal)
-        (setq-local mode-line-misc-info
-                    (append mode-line-misc-info
-                            (list '(:eval (alonso--mode-line-request)))))))))
+      (setq-local mode-line-misc-info
+                  (append (cl-remove-if (lambda (el) (member el fragments))
+                                        mode-line-misc-info)
+                          fragments)))))
 
 ;;; The conversation and the input behave as a single window (atomic window)
 

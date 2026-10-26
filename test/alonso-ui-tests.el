@@ -407,8 +407,8 @@ right — the `alonso-open' layout — and makes the pair atomic."
     (alonso--reset-session)))
 
 ;;; Regression: first open — the input buffer does not exist yet when the
-;;; mode-line setup runs; even so, the request indicator must be installed
-;;; and the default constructs (modes + position) stripped.
+;;; mode-line setup runs; even so, the model, session and request indicators
+;;; must be installed and the default constructs (modes + position) stripped.
 
 (ert-deftest alonso-ui--setup-creates-the-input-buffer ()
   :tags '(ui)
@@ -421,6 +421,15 @@ right — the `alonso-open' layout — and makes the pair atomic."
   (should (with-current-buffer (get-buffer "alonso-chat")
             (cl-member '(:eval (alonso--mode-line-request))
                        mode-line-misc-info :test #'equal))))
+
+(ert-deftest alonso-ui--setup-installs-model-and-session-indicators ()
+  :tags '(ui)
+  (alonso-ui-tests--setup-input-mode-line-fresh)
+  (should (with-current-buffer (get-buffer "alonso-chat")
+            (and (cl-member '(:eval (alonso--mode-line-model))
+                            mode-line-misc-info :test #'equal)
+                 (cl-member '(:eval (alonso--mode-line-session))
+                            mode-line-misc-info :test #'equal)))))
 
 (ert-deftest alonso-ui--setup-strips-modes-construct ()
   :tags '(ui)
@@ -441,18 +450,42 @@ right — the `alonso-open' layout — and makes the pair atomic."
   (should (with-current-buffer (get-buffer "alonso-chat")
             (let ((n 0))
               (dolist (el mode-line-misc-info)
-                (when (equal el '(:eval (alonso--mode-line-request)))
+                (when (member el (list '(:eval (alonso--mode-line-model))
+                                       '(:eval (alonso--mode-line-session))
+                                       '(:eval (alonso--mode-line-request))))
                   (cl-incf n)))
-              (= n 1)))))
+              (= n 3)))))
 
-;; The conversation bar carries the session token usage, with the
-;; status/spinner as the very last fragment.
+(ert-deftest alonso-ui--setup-normalizes-the-fragment-order ()
+  :tags '(ui)
+  (alonso-ui-tests--setup-input-mode-line-fresh)
+  (with-current-buffer (get-buffer "alonso-chat")
+    ;; A bar installed by an older version: only the overrides, straight away.
+    (setq-local mode-line-misc-info (list '(:eval (alonso--mode-line-request))))
+    (alonso--setup-input-mode-line)
+    (should (equal (last mode-line-misc-info 3)
+                   '((:eval (alonso--mode-line-model))
+                     (:eval (alonso--mode-line-session))
+                     (:eval (alonso--mode-line-request)))))))
 
-(ert-deftest alonso-ui--conversation-mode-line-installs-session-indicator ()
+;; The conversation bar keeps the trust grants and the status/spinner; the
+;; model and the session token usage belong to the input bar, next to the
+;; prompt being typed.
+
+(ert-deftest alonso-ui--conversation-mode-line-omits-model-and-session ()
   :tags '(ui)
   (with-current-buffer (alonso--get-buffer)
-    (should (cl-member '(:eval (alonso--mode-line-session))
-                       mode-line-misc-info :test #'equal))))
+    ;; A bar set up by an older version, which showed both here.
+    (setq-local mode-line-misc-info
+                (append mode-line-misc-info
+                        (list '(:eval (alonso--mode-line-model))
+                              '(:eval (alonso--mode-line-session)))))
+    (alonso--get-buffer)
+    (should (with-current-buffer (alonso--get-buffer)
+              (and (null (cl-member '(:eval (alonso--mode-line-model))
+                                    mode-line-misc-info :test #'equal))
+                   (null (cl-member '(:eval (alonso--mode-line-session))
+                                    mode-line-misc-info :test #'equal)))))))
 
 ;; The conversation bar also names the session trust grants: a trust silences
 ;; the confirmation for what it covers, so it must be visible somewhere.
