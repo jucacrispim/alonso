@@ -454,6 +454,36 @@ right — the `alonso-open' layout — and makes the pair atomic."
     (should (cl-member '(:eval (alonso--mode-line-session))
                        mode-line-misc-info :test #'equal))))
 
+;; The conversation bar also names the session trust grants: a trust silences
+;; the confirmation for what it covers, so it must be visible somewhere.
+
+(ert-deftest alonso-ui--mode-line-trust-empty-without-grants ()
+  :tags '(ui)
+  (let ((alonso--trust-tools nil)
+        (alonso--trust-class nil)
+        (alonso--trust-all nil))
+    (should (equal "" (alonso--mode-line-trust)))))
+
+(ert-deftest alonso-ui--mode-line-trust-shows-tools-and-classes ()
+  :tags '(ui)
+  (let ((alonso--trust-tools '("shell"))
+        (alonso--trust-class '(("curl" . "example.com")))
+        (alonso--trust-all nil))
+    (should (equal " 🔓shell curl=example.com" (alonso--mode-line-trust)))))
+
+(ert-deftest alonso-ui--mode-line-trust-shows-the-blanket-trust ()
+  :tags '(ui)
+  (let ((alonso--trust-tools nil)
+        (alonso--trust-class nil)
+        (alonso--trust-all t))
+    (should (equal " 🔓all" (alonso--mode-line-trust)))))
+
+(ert-deftest alonso-ui--conversation-mode-line-installs-trust-indicator ()
+  :tags '(ui)
+  (with-current-buffer (alonso--get-buffer)
+    (should (cl-member '(:eval (alonso--mode-line-trust))
+                       mode-line-misc-info :test #'equal))))
+
 (ert-deftest alonso-ui--spinner-status-is-last-mode-line-fragment ()
   :tags '(ui)
   (with-current-buffer (alonso--get-buffer)

@@ -89,12 +89,71 @@ Tool calls
 ----------
 
 The bridge executes every tool call.  Read-only tools (``read``, ``grep``,
-``glob``, ``knowledge``) run without confirmation: the bridge emits a
-``tool_call`` event and alonso just displays it in the conversation.  Mutating
-tools (``write``, ``search_replace``, ``shell``) need the user's approval: the
-bridge emits a ``tool_confirm`` event with the tool's name and parameters, and
-alonso asks for a decision (approving sends the ``tool_confirm`` command;
-denying is a ``cancel``).
+``glob``) run without confirmation: the bridge emits a ``tool_call`` event and
+alonso just displays it in the conversation.  Mutating tools (``write``,
+``search_replace``, ``shell``, ``curl``) need the user's approval: the bridge
+emits a ``tool_confirm`` event with the tool's name and parameters, and alonso
+asks for a decision (approving sends the ``tool_confirm`` command; denying is a
+``cancel``).
+
+``knowledge`` is classified per call: ``show`` and ``search`` are read-only and
+run inline, while ``add``/``delete``/``reset`` (and a command alonso cannot
+classify) are mutating and ask.  Trust is never granted by *class* to
+``knowledge``: a class trust on KB writes would let a note planted by an
+injected page skip the human, and the KB is read by every later session.
+
+What a trust scope covers depends on the tool:
+
+``shell``
+   *class* is the **program of a single-command line** (``git`` for
+   ``git status``), matched exactly — ``sed`` never covers ``sedx``.  A line
+   that runs more than one command (``cd /tmp && git status``) has no class:
+   its first token would be ``cd``, and trusting that would cover every
+   command that merely changes directory first.  The same goes for a line
+   whose first token is inert (``cd``, ``export``, ``true``…), for an
+   assignment prefix (``FOO=1 cmd``) and for a call the bridge classified as
+   ``medium``/``high`` risk — the class of ``git`` is offered on ``git
+   status``, not on ``git push --force``.  Such a call can still be trusted
+   per call (``s``) or per tool (``a``).
+
+``write`` / ``search_replace``
+   *class* is the file's directory, matched by prefix so sub-directories are
+   covered too.
+
+``curl``
+   *class* is the URL's **host**: scheme, any ``user:password@`` prefix and the
+   port are dropped and the host is lowercased, so ``https://user@Example.COM:8443/a``
+   is trusted as ``example.com``.  The match is exact — trusting
+   ``example.com`` does not trust ``example.com.evil.tld``.  Only the ``url``
+   is considered: a host reached through a redirect (``-L``), ``--resolve`` or
+   an argument is not covered.
+
+A tool without a class (``knowledge``, a ``shell`` line that runs several
+commands, or a ``curl`` call with no usable host) does not offer the *class*
+entry: the menu only shows the scopes that can actually record something.
+
+The ``tool_confirm`` event also carries the prompt-injection hardening detail,
+which alonso shows before the question:
+
+``segments``
+   The commands a ``shell`` one-liner really runs (split on ``;``, ``&&``,
+   ``||``, ``|`` and newlines, never inside quotes).  Redirections are not
+   separators: ``git describe --tags 2>&1 || true`` is two commands, not
+   four.  When there is more than one, they are listed
+   one per line, so an approval that runs ``make && sudo make install`` is read
+   as two commands instead of one long line.
+
+``risk``
+   ``high``, ``medium`` or ``low``.  It is appended to the question and, on
+   ``high``, the call has to be confirmed with a **typed** ``yes`` — a single
+   keystroke only approves ``low``/``medium`` calls.  A trust never covers
+   this: a ``git`` class trust does not turn ``git push --force`` into a
+   silent run.
+
+``tainted``
+   Non-nil when the arguments reproduce content fetched earlier in the session
+   (the shape of "read this page, then run what it says").  It is shown as a
+   warning line and never blocks the call by itself.
 
 Mutating tool calls show their confirmation question right away, one at a time
 — the tool's icon and the ``Run tool: <name>?`` prompt, e.g.
@@ -102,7 +161,19 @@ Mutating tool calls show their confirmation question right away, one at a time
 answers, the ``[allowed]`` / ``[denied]`` tag is prepended to the front of that
 same line.  The trust-scope decision (per-call question and trust scope) uses
 transient menus, with a ``read-char-choice`` fallback when transient is
-unavailable.
+unavailable: trust this call (``s``), this class of calls (``c``) or the whole
+tool (``a``).  If a *class* trust cannot be recorded for the call, a message
+says so and the call is marked ``[allowed]`` (trusted once), never silently
+``[trusted]``.
+
+The ``a`` scope trusts the tool whose question was on screen — never the other
+tools of the session.  A trust silences the questions it covers, so it is never
+invisible: choosing a scope says what it now covers in the echo area, the
+conversation mode line names the active grants (``🔓shell``,
+``🔓curl=example.com``) and ``M-x alonso-trust-reset`` forgets every grant of
+the session (they are also cleared when the bridge is restarted).  The
+*specific* scope is not shown in the mode line: it covers a single call, already
+tagged ``[trusted]`` in the conversation.
 
 Hooks
 -----

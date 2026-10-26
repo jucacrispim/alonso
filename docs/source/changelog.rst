@@ -10,9 +10,55 @@ The format is based on `Keep a Changelog
 Unreleased
 ----------
 
+Added
+~~~~~
+
+- Support for the bridge's ``curl`` tool: it is a mutating tool (it leaves the
+  machine), so it asks for confirmation, and its display shows the URL with the
+  **host highlighted** plus the request ``args``, one per line, only when there
+  are any.
+- The confirmation detail the bridge sends with a ``tool_confirm`` (the
+  prompt-injection hardening) is now consumed and shown: ``segments`` (a
+  ``shell`` one-liner is listed command per command), ``risk`` (appended to the
+  question) and ``tainted`` (a warning line when the arguments repeat fetched
+  content).  All of it is advisory and never blocks the call by itself.
+- A ``high`` risk call has to be confirmed with a **typed** ``yes``: a single
+  keystroke only approves ``low``/``medium`` calls.  Type ``!`` to reach the
+  trust-scope menu instead.
+- ``curl`` has a trust class: the URL's **host** (scheme, ``user:password@``
+  and port dropped, lowercased), so a host can be trusted once for every URL on
+  it.  The match is exact — ``example.com`` never covers
+  ``example.com.evil.tld``.
+- The trust scope entry that cannot record anything is no longer offered: the
+  *class* entry disappears for ``knowledge`` and for a ``curl`` call with no
+  usable host, and if a class trust still ends up unrecorded a message says the
+  call was trusted once (``[allowed]``) instead of silently doing nothing.
+
 Changed
 ~~~~~~~
 
+- ``knowledge`` is classified per call, like the bridge does: ``show`` and
+  ``search`` are read-only (displayed only), while ``add``/``delete``/``reset``
+  — and any command that cannot be classified — are mutating and ask for
+  confirmation.  Previously the whole tool counted as read-only, so a KB write
+  was shown as if it needed no approval.
+- ``knowledge`` deliberately has **no** trust class: trusting a whole class of
+  KB writes would let a note planted by an injected page skip the human (and the
+  KB is read by every later session).
+- The confirmation questions now follow the order the model asked the tool calls
+  in.  The bridge emits every ``tool_confirm`` of a turn at once and the client
+  queued them newest-first, so a batch used to be reviewed in reverse.
+- The ``segments`` of a ``shell`` one-liner no longer count a redirection as a
+  command: with the bridge's fixed splitter, ``git describe --tags 2>&1 || true``
+  is two commands instead of four, so the "runs N commands" header and the
+  segment limit count real commands.
+- The risk of a tool call is now hard to miss.  The warning line is upper case
+  (``⚠ HIGH RISK — destructive, remote or privileged``) in its own bold faces —
+  ``medium`` used to be plain text with no face at all — the taint warning reads
+  ``⚠ TAINTED``, and the same tag (``[HIGH RISK]``/``[MEDIUM RISK]``) is
+  appended both to the question and to the ``Run tool:`` line in the
+  conversation, the one that later carries the ``[allowed]``/``[denied]``
+  outcome.
 - The client no longer wraps the bridge in a sandbox launcher: the **bridge**
   applies the sandbox to itself (it re-executes itself under ``caged`` and
   runs its tools under a stricter policy).  ``alonso-sandbox-command`` is gone;
@@ -39,6 +85,39 @@ Removed
 - ``alonso-sandbox-command``, ``alonso-sandbox-extra-ro-paths``,
   ``alonso-sandbox-extra-rw-paths``, ``alonso-sandbox-env-vars`` and
   ``alonso-sandbox-launcher-env``.
+
+Fixed
+~~~~~
+
+- The trust menu's ``all`` scope (``a``) trusted **every** tool for the rest of
+  the session, although its own entry says "this whole tool": picking it while
+  confirming one tool vouched for tools the user never looked at (a KB write,
+  say).  It now records only the tool whose menu it was picked from.
+- The ``specific`` scope (``s``) never matched in real use, so the call it was
+  supposed to trust asked again on the next confirmation.  It stored the parsed
+  payload and compared with ``equal``, and ``equal`` on hash tables is true only
+  for the very same object — every ``tool_confirm`` arrives parsed afresh.  The
+  payload is now canonicalized (keys sorted, recursing into nested tables and
+  lists) before being recorded and compared.
+- A trust grant is no longer invisible.  It silences the questions it covers,
+  so it is now said out loud: picking a scope reports what it covers in the echo
+  area, the conversation mode line names the active grants (``🔓shell``,
+  ``🔓curl=example.com``) and the new ``M-x alonso-trust-reset`` forgets every
+  grant of the session.
+- The trust **class** of ``shell`` was the first token of the line, so
+  ``cd ~/proj && git status; …`` offered "This class of calls: **cd**" — and a
+  ``cd`` class covers every command that merely changes directory first
+  (``cd /tmp && rm -rf x`` included).  The class is now the program of a
+  **single-command** line (``git`` for ``git status``), and a line that runs
+  several commands, starts with an inert token (``cd``, ``export``, ``true``…)
+  or carries an assignment prefix (``FOO=1 cmd``) has no class at all: the menu
+  offers no ``c`` for it.
+- A ``high`` risk call is no longer approved by a trust.  The confirmation
+  queue checked the trusts before the risk, so a ``git`` class trust turned
+  ``git push --force`` into a silent run — the typed ``yes`` was skipped
+  entirely.  A trusted call that the bridge classifies as ``high`` still asks
+  for the typed answer, and picking a trust scope while confirming one no
+  longer marks this call ``[trusted]`` before that answer.
 
 0.4.0 (2026-10-21)
 ------------------

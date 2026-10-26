@@ -156,6 +156,40 @@
   :tags '(client)
   (should (not (alonso--tool-read-only-p "shell"))))
 
+;; `knowledge' is classified per call, mirroring the bridge: reading the store
+;; is inline, writing to it is offered to the human.
+
+(ert-deftest alonso-client--knowledge-reads-are-read-only ()
+  :tags '(client)
+  (should (alonso--tool-read-only-p
+           "knowledge" (alonso-client-tests--hash "command" "search")))
+  (should (alonso--tool-read-only-p
+           "knowledge" (alonso-client-tests--hash "command" "show")))
+  ;; the bridge trims and lowercases the command before classifying it
+  (should (alonso--tool-read-only-p
+           "knowledge" (alonso-client-tests--hash "command" "  Show  "))))
+
+(ert-deftest alonso-client--knowledge-writes-are-mutating ()
+  :tags '(client)
+  (dolist (cmd '("add" "delete" "reset" "something-else"))
+    (should (not (alonso--tool-read-only-p
+                  "knowledge" (alonso-client-tests--hash "command" cmd))))))
+
+;; A call we cannot classify counts as mutating (fail towards the human), like
+;; `MutatesCall' on the bridge.
+
+(ert-deftest alonso-client--knowledge-without-a-usable-command-is-mutating ()
+  :tags '(client)
+  (should (not (alonso--tool-read-only-p "knowledge" (make-hash-table))))
+  (should (not (alonso--tool-read-only-p "knowledge" nil)))
+  (should (not (alonso--tool-read-only-p
+                "knowledge" (alonso-client-tests--hash "command" 1)))))
+
+(ert-deftest alonso-client--curl-is-never-read-only ()
+  :tags '(client)
+  (should (not (alonso--tool-read-only-p
+                "curl" (alonso-client-tests--hash "url" "https://example.com")))))
+
 ;;; Startup flags — model, thinking, reasoning_effort and logfile (--start-args)
 
 (ert-deftest alonso-client--start-args-empty-by-default ()
@@ -582,7 +616,7 @@ returned and ARGS the arguments it received."
   :tags '(client)
   (let ((alonso-pending-tools nil) (alonso-confirm-tools t) shown dispatched)
     (cl-letf (((symbol-function 'alonso--show-tool-call)
-               (lambda (_id name _input) (setq shown name)))
+               (lambda (_id name _input &optional _meta) (setq shown name)))
               ((symbol-function 'alonso--dispatch-tool)
                (lambda (&rest _) (setq dispatched t))))
       (alonso--on-tool-call (alonso-client-tests--hash "id" "c1" "name" "read"
@@ -597,7 +631,7 @@ returned and ARGS the arguments it received."
   :tags '(client)
   (let ((alonso-pending-tools nil) (alonso-confirm-tools t) shown)
     (cl-letf (((symbol-function 'alonso--show-tool-call)
-               (lambda (_id name _input) (setq shown name))))
+               (lambda (_id name _input &optional _meta) (setq shown name))))
       (alonso--on-tool-call (alonso-client-tests--hash "id" "c1" "name" "knowledge"
                                                        "input" (make-hash-table))))
     (should (and (equal "knowledge" shown) (null alonso-pending-tools)))))
@@ -619,6 +653,23 @@ returned and ARGS the arguments it received."
 
 ;; With confirmation disabled the `tool_confirm' is approved right away.
 
+(ert-deftest alonso-client--tool-confirm-queue-keeps-the-model-order ()
+  :tags '(client)
+  (let ((alonso-pending-tools nil) (alonso-confirm-tools t)
+        (alonso--confirm-queue nil))
+    (cl-letf (((symbol-function 'alonso--schedule-confirm) (lambda () nil)))
+      (dolist (id '("c1" "c2" "c3"))
+        (alonso--on-tool-confirm
+         (alonso-client-tests--hash "id" id "name" "shell"
+                                    "input" (alonso-client-tests--hash
+                                             "command" (concat "echo " id))))))
+    ;; the bridge emits every `tool_confirm' of a turn in one go, so the queue
+    ;; must follow the order the model asked the calls in (a `push' would ask
+    ;; them in reverse)
+    (should (equal '("c1" "c2" "c3")
+                   (mapcar (lambda (tc) (plist-get tc :id))
+                           alonso--confirm-queue)))))
+
 (ert-deftest alonso-client--tool-confirm-disabled-approves-immediately ()
   :tags '(client)
   (let ((alonso-pending-tools nil) (alonso-confirm-tools nil) dispatched)
@@ -628,6 +679,84 @@ returned and ARGS the arguments it received."
       (alonso--on-tool-confirm (alonso-client-tests--hash "id" "c1" "name" "write"
                                                           "input" (make-hash-table))))
     (should (equal '("write" "c1") dispatched))))
+
+;;; Confirmation metadata — segments, risk and taint from the bridge
+
+(ert-deftest alonso-client--hval-true-reads-json-booleans ()
+  :tags '(client)
+  (should (alonso--hval-true (alonso-client-tests--hash "tainted" t) "tainted"))
+  ;; `json-parse-string' turns JSON false into the symbol `:false', not nil.
+  (should (not (alonso--hval-true
+                (alonso-client-tests--hash "tainted" :false) "tainted")))
+  (should (not (alonso--hval-true
+                (alonso-client-tests--hash "tainted" :json-false) "tainted")))
+  (should (not (alonso--hval-true (alonso-client-tests--hash) "tainted")))
+  (should (not (alonso--hval-true nil "tainted"))))
+
+(ert-deftest alonso-client--confirm-meta-reads-the-bridge-fields ()
+  :tags '(client)
+  (let ((meta (alonso--confirm-meta
+               (alonso-client-tests--hash "segments" '("make" "sudo make install")
+                                          "risk" "high"
+                                          "tainted" t))))
+    (should (equal '("make" "sudo make install") (plist-get meta :segments)))
+    (should (equal "high" (plist-get meta :risk)))
+    (should (plist-get meta :tainted))))
+
+;; An older bridge omits all three, so the plist comes back all-nil.
+
+(ert-deftest alonso-client--confirm-meta-empty-without-the-fields ()
+  :tags '(client)
+  (let ((meta (alonso--confirm-meta (alonso-client-tests--hash))))
+    (should (and (null (plist-get meta :segments))
+                 (null (plist-get meta :risk))
+                 (null (plist-get meta :tainted))))))
+
+;; The metadata reaches both the pending tool and the confirmation queue, so
+;; it is still there when the menu is built later.
+
+(ert-deftest alonso-client--tool-confirm-carries-the-confirm-meta ()
+  :tags '(client)
+  (let ((alonso-pending-tools nil) (alonso-confirm-tools t)
+        (alonso--confirm-queue nil))
+    (cl-letf (((symbol-function 'alonso--schedule-confirm) (lambda () nil)))
+      (alonso--on-tool-confirm
+       (alonso-client-tests--hash "id" "c1" "name" "shell"
+                                  "input" (alonso-client-tests--hash
+                                           "command" "rm -rf /")
+                                  "segments" '("rm -rf /" "ls")
+                                  "risk" "high"
+                                  "tainted" t)))
+    (dolist (tc (list (car alonso-pending-tools) (car alonso--confirm-queue)))
+      (should (equal '("rm -rf /" "ls") (plist-get tc :segments)))
+      (should (equal "high" (plist-get tc :risk)))
+      (should (plist-get tc :tainted)))))
+
+;; With confirmation disabled the metadata goes straight to the display.
+
+(ert-deftest alonso-client--tool-confirm-disabled-shows-the-meta ()
+  :tags '(client)
+  (let ((alonso-pending-tools nil) (alonso-confirm-tools nil) shown)
+    (cl-letf (((symbol-function 'alonso--show-tool-call)
+               (lambda (_id _name _input &optional meta) (setq shown meta)))
+              ((symbol-function 'alonso--dispatch-tool-guarded)
+               (lambda (&rest _) nil)))
+      (alonso--on-tool-confirm
+       (alonso-client-tests--hash "id" "c1" "name" "shell"
+                                  "input" (make-hash-table) "risk" "high")))
+    (should (equal "high" (plist-get shown :risk)))))
+
+;; A read-only tool call publishes its metadata to the display too.
+
+(ert-deftest alonso-client--tool-call-passes-the-confirm-meta ()
+  :tags '(client)
+  (let (shown)
+    (cl-letf (((symbol-function 'alonso--show-tool-call)
+               (lambda (_id _name _input &optional meta) (setq shown meta))))
+      (alonso--on-tool-call (alonso-client-tests--hash "id" "c1" "name" "read"
+                                                       "input" (make-hash-table)
+                                                       "risk" "low")))
+    (should (equal "low" (plist-get shown :risk)))))
 
 ;;; `alonso--send-tool-confirm' and `alonso--dispatch-tool'
 
@@ -938,6 +1067,70 @@ returned and ARGS the arguments it received."
          (alonso--trust-class (list (cons "write" "/tmp/alonso/"))))
     (alonso--trust-record 'class "write" in)
     (should (= 1 (length alonso--trust-class)))))
+
+;;; `alonso--input-key' — the canonical form behind the `specific' scope
+
+;; Two payloads with the same content parse into distinct hash tables, and
+;; `equal' on hash tables is true only for the same object: the canonical
+;; form must make them compare `equal' anyway.
+
+(ert-deftest alonso-client--input-key-equal-content-compares-equal ()
+  :tags '(client)
+  (should (equal (alonso--input-key (alonso-client-tests--hash "command" "ls"))
+                 (alonso--input-key (alonso-client-tests--hash "command" "ls")))))
+
+(ert-deftest alonso-client--input-key-different-content-compares-different ()
+  :tags '(client)
+  (should (not (equal
+                (alonso--input-key (alonso-client-tests--hash "command" "ls"))
+                (alonso--input-key (alonso-client-tests--hash "command" "rm"))))))
+
+;; The canonical form does not depend on the order the keys were inserted in.
+
+(ert-deftest alonso-client--input-key-sorts-the-keys ()
+  :tags '(client)
+  (should (equal (alonso--input-key
+                  (alonso-client-tests--hash "a" "1" "b" "2"))
+                 (alonso--input-key
+                  (alonso-client-tests--hash "b" "2" "a" "1")))))
+
+;; Nested tables and lists are canonicalized too, so a `shell' argument list
+;; (the `args' array) does not defeat the comparison.
+
+(ert-deftest alonso-client--input-key-recurses-into-tables-and-lists ()
+  :tags '(client)
+  (let ((a (make-hash-table :test 'equal))
+        (b (make-hash-table :test 'equal)))
+    (puthash "args" (list "x" "y") a)
+    (puthash "nested" (alonso-client-tests--hash "k" "v") a)
+    (puthash "nested" (alonso-client-tests--hash "k" "v") b)
+    (puthash "args" (list "x" "y") b)
+    (should (equal (alonso--input-key a) (alonso--input-key b)))))
+
+;; An atom (a string, a number) is its own key.
+
+(ert-deftest alonso-client--input-key-leaves-atoms-alone ()
+  :tags '(client)
+  (should (and (equal "ls" (alonso--input-key "ls"))
+               (equal 3 (alonso--input-key 3)))))
+
+;;; `alonso-trust-reset' — the way out of a trust picked by accident
+
+(ert-deftest alonso-client--trust-reset-clears-every-scope ()
+  :tags '(client)
+  (let ((alonso--trust-specific (list (cons "shell" (alonso-client-tests--hash "a" "b"))))
+        (alonso--trust-class (list (cons "curl" "example.com")))
+        (alonso--trust-tools (list "shell"))
+        (alonso--trust-all t)
+        (messages '()))
+    (cl-letf (((symbol-function 'message)
+               (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+      (should (= 4 (alonso-trust-reset))))
+    (should (and (null alonso--trust-specific)
+                 (null alonso--trust-class)
+                 (null alonso--trust-tools)
+                 (null alonso--trust-all)))
+    (should (string-match-p "cleared 4 trust" (car messages)))))
 
 (provide 'alonso-client-tests)
 

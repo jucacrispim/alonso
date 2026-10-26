@@ -399,6 +399,27 @@ Empty until the first `turn_end' reports a model."
                   'help-echo "Model used in the current session")
     ""))
 
+(defun alonso--mode-line-trust ()
+  "Return the mode-line fragment naming the tool trusts of the session.
+Empty when nothing is trusted.  A trust silences the confirmation for what
+it covers, so it must be visible: an `all' scope picked once (\"every call
+of this tool\") would otherwise keep skipping the question for the rest of
+the session with nothing on screen saying so.  Tools trusted for every call
+are listed by name and class trusts as \"tool=class-key\" (e.g.
+\"curl=example.com\"); `alonso-trust-reset' clears them all.  The
+`specific' scope is not listed: it covers a single call, already marked
+`[trusted]' in the conversation."
+  (let ((parts (append (when alonso--trust-all (list "all"))
+                       alonso--trust-tools
+                       (mapcar (lambda (pair)
+                                 (format "%s=%s" (car pair) (cdr pair)))
+                               alonso--trust-class))))
+    (if parts
+        (propertize (concat " 🔓" (mapconcat #'identity parts " "))
+                    'help-echo
+                    "Trusted without asking for the rest of the session (M-x alonso-trust-reset clears it)")
+      "")))
+
 ;;; Event render handlers (dispatched by the client's `--handle-line')
 
 (defun alonso--on-chunk (text)
@@ -651,6 +672,11 @@ script's combined output is inserted as plain text."
         (setq-local mode-line-misc-info
                     (append mode-line-misc-info
                             (list '(:eval (alonso--mode-line-session))))))
+      (unless (cl-member '(:eval (alonso--mode-line-trust))
+                         mode-line-misc-info :test #'equal)
+        (setq-local mode-line-misc-info
+                    (append mode-line-misc-info
+                            (list '(:eval (alonso--mode-line-trust))))))
       (unless (cl-member '(:eval (alonso--mode-line-status))
                          mode-line-misc-info :test #'equal)
         (setq-local mode-line-misc-info

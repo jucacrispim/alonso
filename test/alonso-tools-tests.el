@@ -74,6 +74,7 @@
               ((symbol-function 'process-live-p) (lambda (_p) t))
               (alonso--trust-specific nil)
               (alonso--trust-class nil)
+              (alonso--trust-tools nil)
               (alonso--trust-all nil))
       (setq alonso--confirm-queue queue)
       (setq alonso--confirm-timer nil)
@@ -106,6 +107,7 @@
                (lambda (_n _i _id) nil))
               (alonso--trust-specific nil)
               (alonso--trust-class nil)
+              (alonso--trust-tools nil)
               (alonso--trust-all nil))
       (setq alonso--confirm-queue queue)
       (setq alonso--confirm-timer nil)
@@ -435,7 +437,8 @@
 
 (ert-deftest alonso-tools--confirm-ask-opens-transient-menu ()
   :tags '(tools)
-  (let ((opened nil))
+  (let ((opened nil)
+        (alonso--confirm-context nil))
     (cl-letf (((symbol-function 'alonso--confirm-menu)
                (lambda () (setq opened t)))
               ((symbol-function 'alonso--ask-user-trust)
@@ -448,7 +451,8 @@
 
 (ert-deftest alonso-tools--confirm-ask-falls-back-to-char-prompt ()
   :tags '(tools)
-  (let ((answer nil))
+  (let ((answer nil)
+        (alonso--confirm-context nil))
     (cl-letf (((symbol-function 'alonso--confirm-menu) nil)
               ((symbol-function 'alonso--ask-user-trust)
                (lambda (_) 'run))
@@ -700,6 +704,88 @@
   :tags '(tools)
   (should (null (alonso--trust-class-key "shell" (make-hash-table)))))
 
+;; A one-liner that runs several commands has no class: its first token names
+;; the first command only, so trusting `cd /tmp && rm -rf x' as `cd' would
+;; then cover every command that merely changes directory first.
+(ert-deftest alonso-tools--shell-class-key-nil-for-a-compound-line ()
+  :tags '(tools)
+  (dolist (cmd '("cd /tmp && git status"
+                 "git status; git log"
+                 "git log | head -1"
+                 "git log |& head -1"
+                 "git log & sleep 1"
+                 "git status\nls"
+                 "cd /tmp"
+                 "FOO=1 git status"))
+    (should (null (alonso--trust-class-key
+                   "shell" (alonso--json-plist-to-hash
+                            (list "command" cmd)))))))
+
+;; A redirect is not a separator, so a single command that redirects still has
+;; its program as the class key (the bridge used to report the `2>&1' as two
+;; more commands — see the llm-bridge `Segments' tests).
+(ert-deftest alonso-tools--shell-class-key-survives-a-redirect ()
+  :tags '(tools)
+  (dolist (cmd '("git describe --tags 2>&1"
+                 "git log > /tmp/out 2>&1"
+                 "git log &> /tmp/out"
+                 "cat < /tmp/in"))
+    (should (equal (if (string-prefix-p "cat" cmd) "cat" "git")
+                   (alonso--trust-class-key
+                    "shell" (alonso--json-plist-to-hash
+                             (list "command" cmd))))))
+  ;; A quoted separator is data, not a second command.
+  (should (equal "echo"
+                 (alonso--trust-class-key
+                  "shell" (alonso--json-plist-to-hash
+                           (list "command" "echo \"a && b\""))))))
+
+;; An escaped or single-quoted separator is data too.
+(ert-deftest alonso-tools--shell-class-key-ignores-an-escaped-separator ()
+  :tags '(tools)
+  (dolist (cmd '("echo a\\;b" "echo 'a;b'" "echo a\\&b"))
+    (should (equal "echo"
+                   (alonso--trust-class-key
+                    "shell" (alonso--json-plist-to-hash
+                             (list "command" cmd)))))))
+
+;; The class of `git' is offered on a harmless `git status', not on the
+;; command that made the risk tag appear.
+(ert-deftest alonso-tools--shell-class-key-requires-a-low-risk ()
+  :tags '(tools)
+  (let ((status (alonso--json-plist-to-hash (list "command" "git status")))
+        (commit (alonso--json-plist-to-hash (list "command" "git commit -m x")))
+        (push (alonso--json-plist-to-hash (list "command" "git push --force"))))
+    (should (equal "git" (alonso--trust-class-key "shell" status "low")))
+    (should (null (alonso--trust-class-key "shell" commit "medium")))
+    (should (null (alonso--trust-class-key "shell" push "high")))
+    ;; Unknown risk (the comparison path in `alonso--trusted-p') still yields
+    ;; the key, so a class recorded on a low risk call keeps matching.
+    (should (equal "git" (alonso--trust-class-key "shell" status)))))
+
+(ert-deftest alonso-tools--trust-record-refuses-a-high-risk-shell-class ()
+  :tags '(tools)
+  (let ((alonso--trust-class nil)
+        (alonso--trust-all nil))
+    (should (null (alonso--trust-record
+                   'class "shell"
+                   (alonso--json-plist-to-hash (list "command" "git push"))
+                   "high")))
+    (should (null alonso--trust-class))))
+
+(ert-deftest alonso-tools--trust-class-unavailable-for-a-compound-shell-line ()
+  :tags '(tools)
+  (let ((alonso--trust-context
+         (list :name "shell" :risk "low"
+               :input (alonso--json-plist-to-hash
+                       (list "command" "cd /tmp && rm -rf x")))))
+    (should (null (alonso--trust-class-available-p))))
+  (let ((alonso--trust-context
+         (list :name "shell" :risk "low"
+               :input (alonso--json-plist-to-hash
+                       (list "command" "git status")))))
+    (should (alonso--trust-class-available-p))))
+
 (ert-deftest alonso-tools--write-class-key-is-path-directory ()
   :tags '(tools)
   (should (equal "/tmp/sub/"
@@ -737,6 +823,23 @@
           alonso--trust-all nil)
     (alonso--trust-record 'specific "shell" input)
     (should (alonso--trusted-p "shell" input))))
+
+;; The real case: the bridge parses the payload afresh on every
+;; `tool_confirm', so the recorded input and the one being checked are two
+;; distinct hash tables with the same content (`equal' on hash tables is true
+;; only for the same object).
+
+(ert-deftest alonso-tools--specific-trust-matches-an-equal-distinct-input ()
+  :tags '(tools)
+  (let ((alonso--trust-specific nil)
+        (alonso--trust-class nil)
+        (alonso--trust-tools nil)
+        (alonso--trust-all nil))
+    (alonso--trust-record
+     'specific "shell" (alonso--json-plist-to-hash (list "command" "ls -la /tmp")))
+    (should (alonso--trusted-p
+             "shell"
+             (alonso--json-plist-to-hash (list "command" "ls -la /tmp"))))))
 
 (ert-deftest alonso-tools--specific-trust-not-cover-different-input ()
   :tags '(tools)
@@ -778,26 +881,46 @@
     (should (and (null (alonso--trust-record 'class "read" in))
                  (null alonso--trust-class)))))
 
-(ert-deftest alonso-tools--all-tool-trust-makes-every-call-trusted ()
+;; The `all' scope covers the tool it was picked FROM, never every tool: the
+;; user was looking at that tool's question when choosing it, so a `shell'
+;; trust must not vouch for `curl' (let alone for a KB write).
+
+(ert-deftest alonso-tools--all-tool-trust-covers-only-that-tool ()
   :tags '(tools)
-  (let ((input (alonso--json-plist-to-hash (list "command" "echo hi"))))
-    (setq alonso--trust-all nil)
-    (alonso--trust-record 'all "shell" input)
-    (unwind-protect
-        (should (alonso--trusted-p
-                 "shell" (alonso--json-plist-to-hash (list "command" "anything"))))
-      (setq alonso--trust-all nil))))
+  (let ((alonso--trust-tools nil)
+        (alonso--trust-all nil)
+        (alonso--trust-class nil)
+        (alonso--trust-specific nil))
+    (alonso--trust-record
+     'all "shell" (alonso--json-plist-to-hash (list "command" "echo hi")))
+    (should (alonso--trusted-p
+             "shell" (alonso--json-plist-to-hash (list "command" "anything"))))
+    (should (not (alonso--trusted-p
+                  "curl"
+                  (alonso--json-plist-to-hash (list "url" "https://example.com/")))))
+    (should (null alonso--trust-all))
+    (should (equal '("shell") alonso--trust-tools))))
+
+;; `all' needs a tool to trust: without a name nothing is recorded.
+
+(ert-deftest alonso-tools--all-tool-trust-needs-a-tool-name ()
+  :tags '(tools)
+  (let ((alonso--trust-tools nil))
+    (should (null (alonso--trust-record 'all nil nil)))
+    (should (null alonso--trust-tools))))
 
 (ert-deftest alonso-tools--reset-session-clears-trust-state ()
   :tags '(tools)
   (let ((in (alonso--json-plist-to-hash (list "command" "sed x"))))
     (setq alonso--trust-specific (list (cons "shell" in))
           alonso--trust-class (list (cons "shell" "sed"))
+          alonso--trust-tools (list "shell")
           alonso--trust-all t
           alonso--trust-context (list :name "shell"))
     (alonso--reset-session)
     (should (and (null alonso--trust-specific)
                  (null alonso--trust-class)
+                 (null alonso--trust-tools)
                  (null alonso--trust-all)
                  (null alonso--trust-context)))))
 
@@ -976,6 +1099,73 @@
       (alonso--trust-finish 'class))
     (should (equal '(("read" t nil)) recorded))))
 
+;; The `[allowed]' fallback is no longer silent: a `class' scope that records
+;; nothing says so, so the user does not think the trust took effect.
+
+(ert-deftest alonso-tools--trust-finish-warns-when-class-not-recorded ()
+  :tags '(tools)
+  (let ((messages '()))
+    (setq alonso--trust-context
+          (list :name "knowledge" :id "1"
+                :input (alonso-tools-tests--input "command" "add")
+                :rest '() :denied nil)
+          alonso--trust-specific nil
+          alonso--trust-class nil
+          alonso--trust-all nil)
+    (cl-letf (((symbol-function 'alonso--dispatch-tool) (lambda (&rest _) nil))
+              ((symbol-function 'alonso--record-tool-confirmation)
+               (lambda (&rest _) nil))
+              ((symbol-function 'message)
+               (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+      (alonso--trust-finish 'class))
+    (should (string-match-p "no class to trust" (car messages)))))
+
+;; A `class' trust that DID record announces what it now covers: the trust
+;; silences a question the user would otherwise be asked, so it must not be
+;; silent itself.
+
+(ert-deftest alonso-tools--trust-finish-announces-a-recorded-class ()
+  :tags '(tools)
+  (let ((messages '())
+        (alonso--trust-specific nil)
+        (alonso--trust-class nil)
+        (alonso--trust-tools nil)
+        (alonso--trust-all nil))
+    (setq alonso--trust-context
+          (list :name "curl" :id "1"
+                :input (alonso-tools-tests--input "url" "https://example.com/x")
+                :rest '() :denied nil))
+    (cl-letf (((symbol-function 'alonso--dispatch-tool) (lambda (&rest _) nil))
+              ((symbol-function 'alonso--record-tool-confirmation)
+               (lambda (&rest _) nil))
+              ((symbol-function 'message)
+               (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+      (alonso--trust-finish 'class))
+    (should (equal '("curl" . "example.com") (assoc "curl" alonso--trust-class)))
+    (should (string-match-p "curl.*example\\.com" (car messages)))))
+
+;; The `all' scope announces the tool it trusts (and only that one).
+
+(ert-deftest alonso-tools--trust-finish-announces-an-all-tool-trust ()
+  :tags '(tools)
+  (let ((messages '())
+        (alonso--trust-specific nil)
+        (alonso--trust-class nil)
+        (alonso--trust-tools nil)
+        (alonso--trust-all nil))
+    (setq alonso--trust-context
+          (list :name "shell" :id "1"
+                :input (alonso-tools-tests--input "command" "echo hi")
+                :rest '() :denied nil))
+    (cl-letf (((symbol-function 'alonso--dispatch-tool) (lambda (&rest _) nil))
+              ((symbol-function 'alonso--record-tool-confirmation)
+               (lambda (&rest _) nil))
+              ((symbol-function 'message)
+               (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+      (alonso--trust-finish 'all))
+    (should (equal '("shell") alonso--trust-tools))
+    (should (string-match-p "trusting every .shell. call" (car messages)))))
+
 ;;; `alonso--confirm-next' — an already-trusted tool runs without asking
 
 (ert-deftest alonso-tools--confirm-next-runs-trusted-tool-without-asking ()
@@ -996,6 +1186,453 @@
                            (list "path" "/tmp/a" "content" "x"))))
        nil))
     (should (and (null asked) (equal "write" dispatched)))))
+
+;;; Confirmation metadata — segments, risk and taint
+;;
+;; Since the prompt-injection hardening the bridge attaches `segments', `risk'
+;; and `tainted' to a `tool_confirm'.  They are advisory: they tell the human
+;; what an approval really runs, how bad it looks and whether the arguments
+;; repeat content fetched earlier.
+
+(defun alonso-tools-tests--input (&rest kv)
+  "Build a tool input hash table from KV (alternating key/value pairs)."
+  (let ((h (make-hash-table :test 'equal)))
+    (cl-loop for (k v) on kv by #'cddr do (puthash k v h))
+    h))
+
+(ert-deftest alonso-tools--confirm-meta-nil-without-warnings ()
+  :tags '(tools)
+  (should (null (alonso--format-confirm-meta nil)))
+  (should (null (alonso--format-confirm-meta '(:risk "low")))))
+
+;; A single command is already the parameter block: only a one-liner that runs
+;; several commands is spelled out line by line.
+
+(ert-deftest alonso-tools--confirm-meta-single-segment-is-not-listed ()
+  :tags '(tools)
+  (should (null (alonso--format-confirm-meta '(:segments ("ls"))))))
+
+(ert-deftest alonso-tools--confirm-meta-lists-multiple-segments ()
+  :tags '(tools)
+  (let ((s (alonso--format-confirm-meta '(:segments ("make" "sudo make install")))))
+    (should (string-match-p
+             (regexp-quote "runs 2 commands:\n    make\n    sudo make install")
+             s))))
+
+(ert-deftest alonso-tools--confirm-meta-high-risk-is-an-error-line ()
+  :tags '(tools)
+  (let ((s (alonso--format-confirm-meta '(:risk "high"))))
+    (should (string-match-p "high risk" s))
+    (should (eq 'alonso-error-face (get-text-property 0 'face s)))))
+
+(ert-deftest alonso-tools--confirm-meta-medium-risk ()
+  :tags '(tools)
+  (should (string-match-p "medium risk"
+                          (alonso--format-confirm-meta '(:risk "medium")))))
+
+(ert-deftest alonso-tools--confirm-meta-tainted-warns ()
+  :tags '(tools)
+  (let ((s (alonso--format-confirm-meta '(:tainted t))))
+    (should (string-match-p "possible injection" s))
+    (should (eq 'alonso-error-face (get-text-property 0 'face s)))))
+
+;; The warnings are inserted between the header and the parameters.
+
+(ert-deftest alonso-tools--show-tool-call-renders-the-confirm-meta ()
+  :tags '(tools)
+  (let* ((buf (alonso-tools-tests--alonso-buffer))
+         (start (with-current-buffer buf (point-max))))
+    (alonso--show-tool-call
+     "call_meta" "shell" (alonso-tools-tests--input "command" "ls && rm -rf /tmp/x")
+     '(:segments ("ls" "rm -rf /tmp/x") :risk "high" :tainted t))
+    (let ((text (with-current-buffer buf
+                  (buffer-substring-no-properties start (point-max)))))
+      (should (and (string-match-p (regexp-quote "runs 2 commands:") text)
+                   (string-match-p "high risk" text)
+                   (string-match-p "possible injection" text))))))
+
+;; A `knowledge' read is displayed as a read-only title line; a write asks.
+
+(ert-deftest alonso-tools--knowledge-read-is-shown-as-read-only ()
+  :tags '(tools)
+  (let* ((buf (alonso-tools-tests--alonso-buffer))
+         (start (with-current-buffer buf (point-max))))
+    (alonso--show-tool-call
+     "call_k" "knowledge"
+     (alonso-tools-tests--input "command" "search" "query" "x"))
+    (let ((text (with-current-buffer buf
+                  (buffer-substring-no-properties start (point-max)))))
+      (should (and (string-match-p (regexp-quote "🧠 knowledge") text)
+                   (not (string-match-p (regexp-quote "Run tool:") text)))))))
+
+(ert-deftest alonso-tools--knowledge-write-asks-for-confirmation ()
+  :tags '(tools)
+  (let* ((buf (alonso-tools-tests--alonso-buffer))
+         (start (with-current-buffer buf (point-max))))
+    (alonso--show-tool-call
+     "call_k" "knowledge"
+     (alonso-tools-tests--input "command" "add" "label" "x" "text" "y"))
+    (let ((text (with-current-buffer buf
+                  (buffer-substring-no-properties start (point-max)))))
+      (should (string-match-p (regexp-quote "🧠 Run tool: knowledge?") text)))))
+
+;;; `curl' — a network tool: URL (host highlighted) and request args
+
+(ert-deftest alonso-tools--icon-curl ()
+  :tags '(tools)
+  (should (equal "🌐" (alonso--tool-icon "curl"))))
+
+(ert-deftest alonso-tools--confirm-question-curl-shows-the-url ()
+  :tags '(tools)
+  (should (string-match-p
+           (regexp-quote "🌐 Run tool: curl · https://example.com/x? ")
+           (alonso--confirm-question
+            "curl" (alonso-tools-tests--input "url" "https://example.com/x")))))
+
+(ert-deftest alonso-tools--curl-url-parts-splits-an-absolute-url ()
+  :tags '(tools)
+  (should (equal '("https://" "example.com" "/a/b?q=1")
+                 (alonso--curl-url-parts "https://example.com/a/b?q=1"))))
+
+(ert-deftest alonso-tools--curl-url-parts-without-scheme ()
+  :tags '(tools)
+  (should (equal '("" "example.com/x" "")
+                 (alonso--curl-url-parts "example.com/x"))))
+
+(ert-deftest alonso-tools--format-curl-url-highlights-the-host ()
+  :tags '(tools)
+  (let ((s (alonso--format-curl-url "https://example.com/path")))
+    (should (equal "https://example.com/path" (substring-no-properties s)))
+    (should (eq 'alonso-command-face (get-text-property 0 'face s)))
+    ;; the path stays plain: only the destination is highlighted
+    (should (null (get-text-property (length "https://example.com") 'face s)))))
+
+(ert-deftest alonso-tools--format-curl-url-without-scheme-is-plain ()
+  :tags '(tools)
+  (let ((s (alonso--format-curl-url "example.com/x")))
+    (should (equal "example.com/x" s))
+    (should (null (get-text-property 0 'face s)))))
+
+(ert-deftest alonso-tools--curl-args-string-lists-each-arg ()
+  :tags '(tools)
+  (should (equal "  args:\n    -sS\n    -L"
+                 (alonso--curl-args-string '("-sS" "-L")))))
+
+(ert-deftest alonso-tools--curl-args-string-nil-when-empty ()
+  :tags '(tools)
+  (should (null (alonso--curl-args-string nil)))
+  (should (null (alonso--curl-args-string "-sS")))
+  (should (null (alonso--curl-args-string '("" nil)))))
+
+(ert-deftest alonso-tools--format-curl-shows-url-and-args ()
+  :tags '(tools)
+  (let ((s (alonso--format-tool-call
+            "curl" (alonso-tools-tests--input
+                    "url" "https://example.com/x" "args" '("-sS")))))
+    (should (string-match-p
+             (regexp-quote "url:\n    https://example.com/x") s))
+    (should (string-match-p (regexp-quote "args:\n    -sS") s))))
+
+(ert-deftest alonso-tools--format-curl-omits-args-without-them ()
+  :tags '(tools)
+  (let ((s (alonso--format-tool-call
+            "curl" (alonso-tools-tests--input "url" "https://example.com/x"))))
+    (should (not (string-match-p "args:" s)))))
+
+(ert-deftest alonso-tools--format-curl-without-url-keeps-the-label ()
+  :tags '(tools)
+  (should (equal "  url:\n    "
+                 (alonso--format-tool-call "curl" (make-hash-table)))))
+
+;; `knowledge' has no trust class on purpose: a class trust on KB writes would
+;; let a note planted by an injected page skip the human, and the KB is read by
+;; every later session.  `curl' does have one — the URL's host — because that
+;; is the meaningful unit for a network fetch.
+
+(ert-deftest alonso-tools--knowledge-has-no-class-key ()
+  :tags '(tools)
+  (should (null (alonso--trust-class-key
+                 "knowledge" (alonso-tools-tests--input "command" "add")))))
+
+;;; `curl' trust class — the URL's host
+
+(ert-deftest alonso-tools--curl-class-key-is-the-host ()
+  :tags '(tools)
+  (should (equal "example.com"
+                 (alonso--trust-class-key
+                  "curl" (alonso-tools-tests--input
+                          "url" "https://example.com/a/b?q=1")))))
+
+;; The scheme, `user:password@' and the port are all dropped, and the host is
+;; lowercased: the port is noise and a host is case-insensitive.
+(ert-deftest alonso-tools--curl-class-key-drops-userinfo-port-and-case ()
+  :tags '(tools)
+  (should (equal "example.com"
+                 (alonso--trust-class-key
+                  "curl" (alonso-tools-tests--input
+                          "url" "https://user:pw@Example.COM:8443/a?b=1")))))
+
+(ert-deftest alonso-tools--curl-class-key-without-scheme ()
+  :tags '(tools)
+  (should (equal "example.com"
+                 (alonso--trust-class-key
+                  "curl" (alonso-tools-tests--input "url" "example.com/x")))))
+
+;; A bracketed IPv6 literal keeps its brackets (the port after them goes).
+(ert-deftest alonso-tools--curl-class-key-keeps-bracketed-ipv6 ()
+  :tags '(tools)
+  (should (equal "[::1]"
+                 (alonso--trust-class-key
+                  "curl" (alonso-tools-tests--input "url" "http://[::1]:8080/x")))))
+
+;; A malformed bracketed authority (no closing bracket) is kept verbatim
+;; instead of being mangled — it can only ever trust itself.
+(ert-deftest alonso-tools--curl-class-key-tolerates-a-broken-ipv6-literal ()
+  :tags '(tools)
+  (should (equal "["
+                 (alonso--trust-class-key
+                  "curl" (alonso-tools-tests--input "url" "http://[")))))
+
+(ert-deftest alonso-tools--curl-class-key-nil-without-a-usable-host ()
+  :tags '(tools)
+  (should (null (alonso--trust-class-key "curl" (make-hash-table))))
+  (should (null (alonso--trust-class-key
+                 "curl" (alonso-tools-tests--input "url" ""))))
+  (should (null (alonso--trust-class-key
+                 "curl" (alonso-tools-tests--input "url" "https://"))))
+  (should (null (alonso--trust-class-key "curl" (alonso-tools-tests--input
+                                                 "url" 42)))))
+
+;; The host match is exact — a trusted host must not cover a lookalike domain
+;; that merely starts with it (the classic `example.com.evil.tld' trap).
+(ert-deftest alonso-tools--curl-host-class-matches-exactly-not-by-prefix ()
+  :tags '(tools)
+  (should (and (alonso--class-prefix-p "curl" "example.com" "example.com")
+               (not (alonso--class-prefix-p
+                     "curl" "example.com" "example.com.evil.tld")))))
+
+(ert-deftest alonso-tools--curl-class-trust-covers-the-same-host ()
+  :tags '(tools)
+  (let ((trusted (alonso-tools-tests--input
+                  "url" "https://example.com/a"))
+         (same-host (alonso-tools-tests--input
+                     "url" "http://user@example.com:8080/b?c=d"))
+         (other-host (alonso-tools-tests--input
+                      "url" "https://example.com.evil.tld/a")))
+    (setq alonso--trust-specific nil
+          alonso--trust-class nil
+          alonso--trust-all nil)
+    (alonso--trust-record 'class "curl" trusted)
+    (should (and (alonso--trusted-p "curl" same-host)
+                 (not (alonso--trusted-p "curl" other-host))))))
+
+(ert-deftest alonso-tools--trust-description-class-curl-is-the-host ()
+  :tags '(tools)
+  (let ((alonso--trust-context
+         (list :name "curl"
+               :input (alonso-tools-tests--input
+                       "url" "https://user@example.com:8443/x"))))
+    (should (equal "This host, any URL: example.com"
+                   (alonso--trust-description 'class)))))
+
+;; The `class' scope is only offered when there is something to trust.
+(ert-deftest alonso-tools--trust-class-available-p-for-a-host ()
+  :tags '(tools)
+  (let ((alonso--trust-context
+         (list :name "curl" :input (alonso-tools-tests--input
+                                    "url" "https://example.com/x"))))
+    (should (alonso--trust-class-available-p))))
+
+(ert-deftest alonso-tools--trust-class-unavailable-for-knowledge ()
+  :tags '(tools)
+  (let ((alonso--trust-context
+         (list :name "knowledge"
+               :input (alonso-tools-tests--input "command" "add"))))
+    (should (null (alonso--trust-class-available-p)))))
+
+(ert-deftest alonso-tools--trust-class-unavailable-for-a-hostless-curl ()
+  :tags '(tools)
+  (let ((alonso--trust-context
+         (list :name "curl" :input (alonso-tools-tests--input "url" ""))))
+    (should (null (alonso--trust-class-available-p))))
+  (should (null (alonso--trust-class-available-p))))
+
+;;; Risk — the menu question carries it and `high' forces a typed answer
+
+(ert-deftest alonso-tools--confirm-question-medium-risk-tag ()
+  :tags '(tools)
+  (should (equal "🔧 Run tool: foo [medium risk]? "
+                 (alonso--confirm-question "foo" (make-hash-table) "medium"))))
+
+(ert-deftest alonso-tools--confirm-question-low-risk-omits-the-tag ()
+  :tags '(tools)
+  (should (equal "🔧 Run tool: foo? "
+                 (alonso--confirm-question "foo" (make-hash-table) "low"))))
+
+(ert-deftest alonso-tools--confirmation-menu-question-shows-the-risk ()
+  :tags '(tools)
+  (let ((alonso--confirm-context
+         (list :name "shell" :risk "high"
+               :input (alonso-tools-tests--input "command" "rm -rf /"))))
+    (should (string-match-p "\\[high risk\\]"
+                            (alonso--confirm-menu-question)))))
+
+(ert-deftest alonso-tools--confirm-risk-reads-the-context ()
+  :tags '(tools)
+  (let ((alonso--confirm-context (list :name "shell" :risk "high")))
+    (should (equal "high" (alonso--confirm-risk))))
+  (let ((alonso--confirm-context nil))
+    (should (null (alonso--confirm-risk)))))
+
+;; The typed prompt only runs on an explicit "yes"; "!" opens the trust menu
+;; and anything else (including an empty answer) denies the call.
+
+(ert-deftest alonso-tools--ask-user-typed-maps-the-answer ()
+  :tags '(tools)
+  (let (answer)
+    (cl-letf (((symbol-function 'read-string) (lambda (&rest _) answer)))
+      (setq answer "yes") (should (eq 'run (alonso--ask-user-typed "p")))
+      (setq answer " YES ") (should (eq 'run (alonso--ask-user-typed "p")))
+      (setq answer "!") (should (eq 'trust (alonso--ask-user-typed "p")))
+      (setq answer "y") (should (eq 'deny (alonso--ask-user-typed "p")))
+      (setq answer nil) (should (eq 'deny (alonso--ask-user-typed "p"))))))
+
+(ert-deftest alonso-tools--confirm-ask-high-risk-requires-a-typed-answer ()
+  :tags '(tools)
+  (let ((alonso--confirm-context
+         (list :name "shell" :risk "high"
+               :input (alonso-tools-tests--input "command" "rm -rf /")))
+        (typed nil) (answer nil))
+    (cl-letf (((symbol-function 'alonso--confirm-menu)
+               (lambda () (error "should not open the menu")))
+              ((symbol-function 'alonso--ask-user-typed)
+               (lambda (prompt) (setq typed prompt) 'run))
+              ((symbol-function 'alonso--confirm-answer)
+               (lambda (a) (setq answer a))))
+      (alonso--confirm-ask "shell" (alonso-tools-tests--input "command" "rm -rf /")))
+    (should (and (string-match-p "high risk" typed) (eq answer 'run)))))
+
+(ert-deftest alonso-tools--confirm-ask-high-risk-abort-denies ()
+  :tags '(tools)
+  (let ((alonso--confirm-context (list :name "shell" :risk "high"))
+        (answer nil))
+    (cl-letf (((symbol-function 'alonso--ask-user-typed)
+               (lambda (_prompt) (signal 'quit nil)))
+              ((symbol-function 'alonso--confirm-answer)
+               (lambda (a) (setq answer a))))
+      (alonso--confirm-ask "shell" nil))
+    (should (eq answer 'deny))))
+
+;;; The queue entry carries the metadata into the display and the context
+
+(ert-deftest alonso-tools--tool-meta-picks-the-queue-fields ()
+  :tags '(tools)
+  (should (equal '(:segments ("a" "b") :risk "high" :tainted t)
+                 (alonso--tool-meta (list :id "1" :segments '("a" "b")
+                                          :risk "high" :tainted t)))))
+
+(ert-deftest alonso-tools--confirm-next-passes-the-meta-and-risk ()
+  :tags '(tools)
+  (let (shown ctx)
+    (cl-letf (((symbol-function 'alonso--show-tool-call)
+               (lambda (_id _name _input &optional meta) (setq shown meta)))
+              ((symbol-function 'alonso--confirm-ask)
+               (lambda (&rest _) (setq ctx alonso--confirm-context)))
+              ((symbol-function 'alonso--record-tool-confirmation)
+               (lambda (&rest _) nil))
+              ((symbol-function 'alonso--keep-question-visible)
+               (lambda (&rest _) nil))
+              (alonso--trust-specific nil)
+              (alonso--trust-class nil)
+              (alonso--trust-all nil))
+      (alonso--confirm-next
+       (list (list :id "1" :name "shell" :input (make-hash-table)
+                   :segments '("a" "b") :risk "high" :tainted t))
+       nil))
+    (should (equal "high" (plist-get shown :risk)))
+    (should (equal '("a" "b") (plist-get shown :segments)))
+    (should (plist-get shown :tainted))
+    (should (equal "high" (plist-get ctx :risk)))))
+
+;;; A trust never approves a `high' risk call by itself
+
+;; A trust silences the questions that come after it, not the typed `yes' that
+;; makes a `high' risk call safe: a `git' class trust must not turn
+;; `git push --force' into a silent run.
+(ert-deftest alonso-tools--trusted-high-risk-is-still-asked ()
+  :tags '(tools)
+  (let ((asked nil) (dispatched nil) (tag nil)
+        (alonso--trust-tools '("shell"))
+        (alonso--trust-all nil)
+        (alonso--trust-class nil)
+        (alonso--trust-specific nil))
+    (cl-letf (((symbol-function 'alonso--show-tool-call)
+               (lambda (&rest _) nil))
+              ((symbol-function 'alonso--confirm-ask)
+               (lambda (&rest _) (setq asked t)))
+              ((symbol-function 'alonso--dispatch-tool-guarded)
+               (lambda (&rest _) (setq dispatched t)))
+              ((symbol-function 'alonso--record-tool-confirmation)
+               (lambda (&rest a) (setq tag (nth 2 a))))
+              ((symbol-function 'alonso--keep-question-visible)
+               (lambda (&rest _) nil)))
+      (alonso--confirm-next
+       (list (list :id "1" :name "shell"
+                   :input (alonso--json-plist-to-hash
+                           (list "command" "git push --force"))
+                   :risk "high"))
+       nil))
+    (should (and asked (not dispatched) (null tag)))))
+
+;; The same trust does skip the question for a low risk call.
+(ert-deftest alonso-tools--trusted-low-risk-is-not-asked ()
+  :tags '(tools)
+  (let ((asked nil) (dispatched nil)
+        (alonso--trust-tools '("shell"))
+        (alonso--trust-all nil)
+        (alonso--trust-class nil)
+        (alonso--trust-specific nil))
+    (cl-letf (((symbol-function 'alonso--show-tool-call)
+               (lambda (&rest _) nil))
+              ((symbol-function 'alonso--confirm-ask)
+               (lambda (&rest _) (setq asked t)))
+              ((symbol-function 'alonso--dispatch-tool-guarded)
+               (lambda (&rest _) (setq dispatched t)))
+              ((symbol-function 'alonso--record-tool-confirmation)
+               (lambda (&rest _) nil)))
+      (alonso--confirm-next
+       (list (list :id "1" :name "shell"
+                   :input (alonso--json-plist-to-hash
+                           (list "command" "git status"))
+                   :risk "low"))
+       nil))
+    (should (and dispatched (not asked)))))
+
+;; Picking a trust scope while confirming a `high' risk call records the trust
+;; and still asks for the typed `yes' this time.
+(ert-deftest alonso-tools--trust-finish-high-risk-still-asks-typed ()
+  :tags '(tools)
+  (let ((asked nil) (dispatched nil) (tag nil)
+        (alonso--trust-tools nil)
+        (alonso--trust-all nil)
+        (alonso--trust-class nil)
+        (alonso--trust-specific nil))
+    (setq alonso--trust-context
+          (list :name "shell" :id "1" :risk "high"
+                :input (alonso--json-plist-to-hash (list "command" "git push"))
+                :rest nil :denied nil))
+    (cl-letf (((symbol-function 'alonso--confirm-ask)
+               (lambda (&rest _) (setq asked t)))
+              ((symbol-function 'alonso--dispatch-tool-guarded)
+               (lambda (&rest _) (setq dispatched t)))
+              ((symbol-function 'alonso--record-tool-confirmation)
+               (lambda (&rest a) (setq tag (nth 2 a)))))
+      (alonso--trust-finish 'all))
+    ;; The trust was recorded (it covers the calls that follow)...
+    (should (member "shell" alonso--trust-tools))
+    ;; ...but this call is not run on the strength of it, and it is not tagged
+    ;; `[trusted]' before the typed answer says so.
+    (should (and asked (not dispatched) (null tag)))))
 
 (provide 'alonso-tools-tests)
 

@@ -45,7 +45,8 @@
     ("read"          . "📄")
     ("write"         . "✏️")
     ("search_replace" . "🔁")
-    ("knowledge"     . "🧠"))
+    ("knowledge"     . "🧠")
+    ("curl"          . "🌐"))
   "Alist of tool name → unicode icon.
 Shown before the tool name in the confirmation questions (the
 `Run tool: ...?' prompt and its recorded line).")
@@ -56,29 +57,36 @@ Shown before the tool name in the confirmation questions (the
 
 (defun alonso--tool-detail-string (name input)
   "Return the plain-text detail of tool NAME with INPUT, for the minibuffer.
-`shell' shows its command, `grep'/`glob' the pattern and the file tools the
-path.  Used in the confirmation question prompt."
+`shell' shows its command, `grep'/`glob' the pattern, `curl' the URL and the
+file tools the path.  Used in the confirmation question prompt."
   (cond
    ((equal name "shell")
     (or (alonso--hval input "command") ""))
    ((member name '("grep" "glob"))
     (or (alonso--hval input "pattern") ""))
+   ((equal name "curl")
+    (or (alonso--hval input "url") ""))
    ((member name '("read" "write" "search_replace"))
     (or (alonso--hval input "path") ""))
    (t "")))
 
-(defun alonso--confirm-question (name input)
+(defun alonso--confirm-question (name input &optional risk)
   "Build the minibuffer confirmation question for tool NAME with INPUT.
 Prefixes the tool's unicode icon and, when available, shows the command
-\(`shell'), pattern (`grep'/`glob') or path (file tools) right after the
-name,
-e.g. \"🖥 Run tool: shell · ps aux? \".  The minibuffer itself cannot render
+\(`shell'), pattern (`grep'/`glob'), URL (`curl') or path (file tools)
+right after the name, e.g. \"🖥 Run tool: shell · ps aux? \".  When RISK is
+\"high\" or \"medium\" it is appended as a tag, so the question states the
+danger before the one-keystroke answer.  The minibuffer itself cannot render
 colors, so the detail is shown as plain text here."
-  (let ((detail (alonso--tool-detail-string name input)))
+  (let ((detail (alonso--tool-detail-string name input))
+        (tag (pcase risk
+               ("high" " [high risk]")
+               ("medium" " [medium risk]")
+               (_ ""))))
     (if (string-empty-p detail)
-        (format "%s Run tool: %s? " (alonso--tool-icon name) name)
-      (format "%s Run tool: %s · %s? "
-              (alonso--tool-icon name) name detail))))
+        (format "%s Run tool: %s%s? " (alonso--tool-icon name) name tag)
+      (format "%s Run tool: %s · %s%s? "
+              (alonso--tool-icon name) name detail tag))))
 
 (defun alonso--tool-input-pairs (input)
   "Return INPUT (a hash-table) as a sorted list of (key . value) pairs."
@@ -103,12 +111,81 @@ colors, so the detail is shown as plain text here."
              (split-string (format "%s" text) "\n")
              "\n"))
 
+(defun alonso--curl-url-parts (url)
+  "Split URL into (SCHEME HOST REST).
+SCHEME includes the `://' and is empty when URL is not absolute, in which
+case HOST keeps the whole string."
+  (if (string-match "\\`\\([[:alpha:]][[:alnum:]+.-]*://\\)\\([^/?#]*\\)\\(.*\\)\\'"
+                    url)
+      (list (match-string 1 url) (match-string 2 url) (match-string 3 url))
+    (list "" url "")))
+
+(defun alonso--format-curl-url (url)
+  "Return URL with its scheme and host highlighted in `alonso-command-face'.
+The path and query stay plain: the destination is what the human has to
+read, and a `curl' sends data out of the machine."
+  (let* ((parts (alonso--curl-url-parts url))
+         (scheme (nth 0 parts))
+         (host (nth 1 parts))
+         (rest (nth 2 parts)))
+    (if (string-empty-p scheme)
+        url
+      (concat (propertize (concat scheme host) 'face 'alonso-command-face)
+              rest))))
+
+(defun alonso--curl-args-string (args)
+  "Return the `curl' request ARGS (a list of strings) as indented lines.
+Returns nil when there is nothing to show, so the `args' block is omitted."
+  (let ((items (when (consp args)
+                 (delq nil (mapcar (lambda (arg)
+                                     (and (stringp arg)
+                                          (not (string-empty-p arg))
+                                          arg))
+                                   args)))))
+    (when items
+      (concat "  args:\n"
+              (mapconcat (lambda (arg) (concat "    " arg)) items "\n")))))
+
+(defun alonso--format-confirm-meta (meta)
+  "Return a string rendering the confirmation META of a tool call, or nil.
+META is the plist built by `alonso--confirm-meta'.  A one-liner that runs
+several commands is listed command per command, so an approval that runs
+`make && sudo install' is read as two commands instead of one long line; the
+risk is shown when it is not `low' and a tainted call gets a warning line.
+All of it is advisory: it is there for the human reading the question, never
+to block the call by itself."
+  (let ((segments (plist-get meta :segments))
+        (risk (plist-get meta :risk))
+        (tainted (plist-get meta :tainted))
+        (parts nil))
+    (when (and (consp segments) (cdr segments))
+      (push (concat (format "  runs %d commands:\n" (length segments))
+                    (mapconcat (lambda (segment) (concat "    " segment))
+                               segments "\n")
+                    "\n")
+            parts))
+    (pcase risk
+      ("high"
+       (push (propertize "  ⚠ high risk (destructive, remote or privileged)\n"
+                         'face 'alonso-error-face)
+             parts))
+      ("medium"
+       (push "  ⚠ medium risk\n" parts)))
+    (when tainted
+      (push (propertize "  ⚠ repeats content fetched earlier (possible injection)\n"
+                        'face 'alonso-error-face)
+            parts))
+    (when parts
+      (mapconcat #'identity (nreverse parts) ""))))
+
 (defun alonso--format-tool-call (name input)
   "Return a propertized string describing tool NAME with its INPUT.
 For `search_replace' the search is shown in red prefixed with `-' and the
-replace in dark green prefixed with `+', diff style.  Other tools show each
-parameter as a `key:' label (in `alonso-command-face', bold) followed by its
-value indented on the line below."
+replace in dark green prefixed with `+', diff style.  For `curl' the URL is
+shown with its host highlighted and the request `args' only when present
+\(one per line).  Other tools show each parameter as a `key:' label (in
+`alonso-command-face', bold) followed by its value indented on the line
+below."
   (if (hash-table-p input)
       (cond
        ((equal name "search_replace")
@@ -122,6 +199,11 @@ value indented on the line below."
            (propertize (concat "\n"
                                (alonso--diff-lines replace "+"))
                        'face 'alonso-replace-face))))
+       ((equal name "curl")
+        (let ((url (or (alonso--hval input "url") ""))
+              (args (alonso--curl-args-string (alonso--hval input "args"))))
+          (concat (format "  url:\n    %s" (alonso--format-curl-url url))
+                  (when args (concat "\n" args)))))
        (t
         (let ((pairs (alonso--tool-input-pairs input)))
           (mapconcat
@@ -133,8 +215,12 @@ value indented on the line below."
            pairs "\n"))))
     ""))
 
-(defun alonso--show-tool-call (_id name input)
+(defun alonso--show-tool-call (_id name input &optional meta)
   "Insert the tool-call line and its parameters for tool NAME with INPUT.
+
+META is the optional confirmation metadata (`alonso--confirm-meta'): when
+present, the number of commands a `shell' one-liner runs, the risk level and
+the taint warning are shown between the header and the parameters.
 
 Read-only tools (which run without confirmation) get a title line with the
 tool's icon and name, e.g. \"📄 read\".  Mutating tools (which ask for an
@@ -147,7 +233,7 @@ question is visible from the start (not only after the answer).  Returns the
 buffer position of the visible title/parameters."
   (alonso--render-answer)
   (alonso--thinking-placeholder-end)
-  (let* ((read-only (alonso--tool-read-only-p name))
+  (let* ((read-only (alonso--tool-read-only-p name input))
          (header (if read-only
                      (format "\n%s %s\n" (alonso--tool-icon name) name)
                    (concat "\n"
@@ -158,6 +244,9 @@ buffer position of the visible title/parameters."
     ;; point at the start of the visible line (title or question), where the
     ;; `[allowed]' / `[denied]' tag is prepended later
     (setq alonso--tool-call-pos (1+ pos))
+    (let ((warnings (alonso--format-confirm-meta meta)))
+      (when warnings
+        (alonso--insert-propertized warnings)))
     (let ((desc (alonso--format-tool-call name input)))
       (when (> (length desc) 0)
         (alonso--insert-propertized desc)))
@@ -165,6 +254,14 @@ buffer position of the visible title/parameters."
     (1+ pos)))
 
 ;;; Step 9 — Batch confirmation, trust scope and UX
+
+(defun alonso--tool-meta (tc)
+  "Return the confirmation metadata plist of the queued tool call TC.
+TC carries the fields the bridge sent with the `tool_confirm' event
+\(`alonso--confirm-meta'); this just picks them from the queue entry."
+  (list :segments (plist-get tc :segments)
+        :risk (plist-get tc :risk)
+        :tainted (plist-get tc :tainted)))
 
 (defun alonso--cancel-confirm ()
   "Cancel any pending batch tool confirmation."
@@ -250,12 +347,13 @@ trust-scope menu (run every time from then on)."
 ;; confirmation path from triggering an unknown-function warning.
 (declare-function alonso--trust-menu "alonso-tools")
 
-(defun alonso--trust-pause (name input id rest denied)
+(defun alonso--trust-pause (name input id rest denied &optional risk)
   "Pause batch confirmation for tool NAME/INPUT/ID to pick a trust scope.
-Saves the remaining REST of the queue and the DENIED flag in
-`alonso--trust-context' and opens the trust menu."
+Saves the remaining REST of the queue, the DENIED flag and the RISK the
+bridge reported in `alonso--trust-context' and opens the trust menu."
   (setq alonso--trust-context
-        (list :name name :input input :id id :rest rest :denied denied))
+        (list :name name :input input :id id :rest rest :denied denied
+              :risk risk))
   (setq alonso--menu-answered nil)
   (alonso--trust-menu))
 
@@ -263,34 +361,79 @@ Saves the remaining REST of the queue and the DENIED flag in
   "Record the trust chosen in SCOPE for the paused tool call and resume.
 Reads the paused context, records the trust, marks the current tool as
 `[trusted]' (or `[allowed]' when the scope could not record a trust, e.g. a
-`class' on a tool without a class key), dispatches it guarded, and continues
-confirming the rest of the batch."
+`class' on a tool without a class key — in which case a message says the
+trust did not stick), dispatches it guarded, and continues
+confirming the rest of the batch.  A `high' risk call is asked again with
+the typed prompt even when it is now trusted: a trust silences the
+questions that come after it, never the one that was just raised."
   (let* ((ctx alonso--trust-context)
          (name (plist-get ctx :name))
          (input (plist-get ctx :input))
          (id (plist-get ctx :id))
          (rest (plist-get ctx :rest))
-         (denied (plist-get ctx :denied)))
+         (denied (plist-get ctx :denied))
+         (risk (plist-get ctx :risk))
+         (high (equal risk "high")))
     (setq alonso--trust-context nil)
     ;; Nothing paused (e.g. the turn was cancelled while the sub-menu was
     ;; open): do not dispatch a nil tool call.
     (when name
-      (alonso--trust-record scope name input)
-      (if (alonso--trusted-p name input)
-          (alonso--record-tool-confirmation name input t "trusted")
-        (alonso--record-tool-confirmation name input t))
-      (alonso--dispatch-tool-guarded name input id)
-      (alonso--confirm-next rest denied))))
+      (alonso--trust-record scope name input risk)
+      (cond
+       ;; Trusted and not `high': run it without asking again.
+       ((and (alonso--trusted-p name input) (not high))
+        (alonso--record-tool-confirmation name input t "trusted")
+        (alonso--announce-trust scope name input risk)
+        (alonso--dispatch-tool-guarded name input id)
+        (alonso--confirm-next rest denied))
+       ;; Nothing was recorded (a `class' on a tool without a class key): the
+       ;; tag is `[allowed]' and the next call asks again.  Say so: a scope
+       ;; the menu offered must never look like it took effect.
+       ((not high)
+        (when (eq scope 'class)
+          (message "alonso: %s has no class to trust; trusted this call only"
+                   name))
+        (alonso--record-tool-confirmation name input t)
+        (alonso--dispatch-tool-guarded name input id)
+        (alonso--confirm-next rest denied))
+       ;; `high' risk: the typed prompt is the only answer that runs it, even
+       ;; when a trust now covers it.
+       (t
+        (setq alonso--confirm-context
+              (list :name name :input input :id id :rest rest
+                    :denied denied :risk risk))
+        (alonso--confirm-ask name input))))))
+
+(defun alonso--announce-trust (scope name input &optional risk)
+  "Say in the echo area what SCOPE now trusts for tool NAME with INPUT.
+RISK is the level the bridge reported, used to name the `class' key the way
+the menu named it.  A trust silences a confirmation the user would otherwise
+be asked for, so it must not be silent itself: a scope picked by accident
+used to leave no trace anywhere.  The mode-line also names the active grants
+\(see `alonso--mode-line-trust').  Silent for `specific': that one covers a
+single call and the `[trusted]' tag on the question already says so."
+  (pcase scope
+    ('all
+     (message (concat "alonso: trusting every `%s' call for this session"
+                      " (M-x alonso-trust-reset clears it)")
+              name))
+    ('class
+     (message (concat "alonso: trusting `%s' = %s for this session"
+                      " (M-x alonso-trust-reset clears it)")
+              name (alonso--trust-class-key name input risk)))
+    (_ nil)))
 
 (defun alonso--trust-description (kind)
   "Return a menu description for the paused trust context of KIND.
 KIND is one of the symbols `specific', `class' or `all'.  Reads the paused
 tool call from `alonso--trust-context' so the menu shows exactly
-what is being approved: the concrete command/pattern/path for `specific',
-the class key (e.g. the first `shell' command token or the file's
-directory) for `class' and the tool name for `all' — so, for example, a
-`sed' class is shown as \"This class of calls: sed\" instead of an
-ambiguous label."
+what is being approved: the concrete command/pattern/URL/path for
+`specific', the class key for `class' (the `shell' program of a
+single-command line, the file's directory or the `curl' URL's host) and the
+tool name for `all' — so,
+for example, a `sed' class is shown as \"This class of calls: sed\" and a
+host class as \"This host, any URL: example.com\" instead of an ambiguous
+label."
   (let ((name (plist-get alonso--trust-context :name))
         (input (plist-get alonso--trust-context :input)))
     (pcase kind
@@ -300,10 +443,12 @@ ambiguous label."
          "This whole tool"))
       ('class
        (if (and name input)
-           (let ((key (alonso--trust-class-key name input)))
-             (if key
-                 (format "This class of calls: %s" key)
-               "This class of calls"))
+           (let ((key (alonso--trust-class-key
+                       name input (plist-get alonso--trust-context :risk))))
+             (cond
+              ((null key) "This class of calls")
+              ((equal name "curl") (format "This host, any URL: %s" key))
+              (t (format "This class of calls: %s" key))))
          "This class of calls"))
       ('specific
        (let ((detail (if (and name input)
@@ -313,6 +458,17 @@ ambiguous label."
              "This specific call"
            (format "This specific call: %s" detail))))
       (_ ""))))
+
+(defun alonso--trust-class-available-p ()
+  "Return non-nil when the paused tool call has a class to trust.
+Reads the paused call from `alonso--trust-context'.  Used as the `:if' of
+the `class' trust scope, so the entry disappears instead of silently
+trusting nothing: `knowledge' has no class, a `shell' line that runs more
+than one command (or starts with `cd') has none either, and a `curl' call
+whose `url' yields no host has none."
+  (alonso--trust-class-key (plist-get alonso--trust-context :name)
+                           (plist-get alonso--trust-context :input)
+                           (plist-get alonso--trust-context :risk)))
 
 (defun alonso--trust-cancel ()
   "Abort a paused trust choice: deny the tool and abort the batch.
@@ -397,7 +553,11 @@ empty context and dispatch a nil tool call, leaving the turn hanging."
     (setq alonso--menu-answered t)
     (run-with-timer 0 nil #'alonso--trust-finish 'specific))
   (transient-define-suffix alonso--trust-finish-class ()
-    "Trust this whole class of calls (shell command token / path directory)."
+    "Trust this whole class of calls (shell token / host / directory)."
+    ;; Only offered when the tool actually has a class key: `knowledge' never
+    ;; has one and a `curl' URL without a host has none either, and a menu
+    ;; entry that silently trusts nothing is worse than no entry.
+    :if #'alonso--trust-class-available-p
     (interactive)
     (setq alonso--menu-answered t)
     (run-with-timer 0 nil #'alonso--trust-finish 'class))
@@ -428,10 +588,12 @@ empty context and dispatch a nil tool call, leaving the turn hanging."
 (defun alonso--confirm-menu-question ()
   "Return the question shown at the top of the confirmation menu.
 Reads the pending tool call from `alonso--confirm-context' so the
-menu displays exactly what is about to run (icon + command/pattern/path)."
+menu displays exactly what is about to run (icon + command/pattern/path),
+including its risk level when it is not `low'."
   (let ((name (plist-get alonso--confirm-context :name))
-        (input (plist-get alonso--confirm-context :input)))
-    (alonso--confirm-question name input)))
+        (input (plist-get alonso--confirm-context :input))
+        (risk (plist-get alonso--confirm-context :risk)))
+    (alonso--confirm-question name input risk)))
 
 (defun alonso--confirm-pending (&optional queue)
   "Confirm and execute each tool call queued for confirmation.
@@ -470,7 +632,8 @@ remaining tool is denied right away (no question).  Each tool is displayed
 one at a time.  The first tool that must be asked is saved in
 `alonso--confirm-context' and its question opened; the batch is
 resumed by `alonso--confirm-answer'.  When the queue is exhausted,
-a denial cancels the turn."
+a denial cancels the turn.  A `high' risk call is always asked, trusted or
+not: only the typed `yes' approves it."
   (if (null queue)
       (when denied
         (alonso-cancel))
@@ -478,18 +641,22 @@ a denial cancels the turn."
            (rest (cdr queue))
            (id (plist-get tc :id))
            (name (plist-get tc :name))
-           (input (plist-get tc :input)))
+           (input (plist-get tc :input))
+           (high (equal (plist-get tc :risk) "high")))
       ;; Show this tool call now (one at a time), so only the tool being
       ;; confirmed appears on screen — not every tool of the batch.
-      (alonso--show-tool-call id name input)
+      (alonso--show-tool-call id name input (alonso--tool-meta tc))
       (cond
        ;; A previous tool was denied: refuse this one too, no question.  No
        ;; tool_result is sent — the batch is aborted with a `cancel' at the end.
        (denied
         (alonso--record-tool-confirmation name input nil)
         (alonso--confirm-next rest t))
-       ;; Already trusted: run directly, no question.
-       ((alonso--trusted-p name input)
+       ;; Already trusted: run directly, no question.  `high' risk is the
+       ;; exception: a trust silences the questions that come after it, and
+       ;; the typed `yes' is the whole point of the tag — a `git' class trust
+       ;; must not turn `git push --force' into a silent run.
+       ((and (alonso--trusted-p name input) (not high))
         (alonso--record-tool-confirmation name input t "trusted")
         (alonso--dispatch-tool-guarded name input id)
         (alonso--confirm-next rest nil))
@@ -500,27 +667,55 @@ a denial cancels the turn."
         ;; this the user would not see the line being confirmed.
         (alonso--keep-question-visible alonso--tool-call-pos)
         (setq alonso--confirm-context
-              (list :name name :input input :id id :rest rest :denied denied))
+              (list :name name :input input :id id :rest rest
+                    :denied denied :risk (plist-get tc :risk)))
         (alonso--confirm-ask name input))))))
+
+(defun alonso--confirm-risk ()
+  "Return the risk level of the pending confirmation, or nil.
+It is the `risk' the bridge attached to the `tool_confirm' event
+\(\"high\", \"medium\" or \"low\"\), read from `alonso--confirm-context'."
+  (plist-get alonso--confirm-context :risk))
+
+(defun alonso--ask-user-typed (prompt)
+  "Ask the user PROMPT and require a typed `yes' to run the tool.
+Used for `high' risk confirmations, where a single keystroke is too easy to
+give to a destructive, remote or privileged command.  Returns `run', `deny'
+or `trust': typing \"yes\" runs it once, \"!\" opens the trust-scope menu and
+anything else denies it."
+  (let ((answer (downcase (string-trim
+                           (or (read-string (concat prompt "type \"yes\" to run: "))
+                               "")))))
+    (pcase answer
+      ("yes" 'run)
+      ("!" 'trust)
+      (_ 'deny))))
 
 (defun alonso--confirm-ask (name input)
   "Ask the user whether to run tool NAME with INPUT.
-Opens the transient `alonso--confirm-menu' when transient is
-available; otherwise falls back to `alonso--ask-user-trust' and
-applies the answer synchronously via `alonso--confirm-answer'.
-This is the single seam the batch tests stub to answer without a menu.
-Closing the question without answering is treated as a deny: the menu path
-is handled by `alonso--menu-exit-hook' and the char-prompt fallback
-by the `quit' handler here, so the turn never hangs."
-  (if (fboundp 'alonso--confirm-menu)
-      (progn
-        (setq alonso--menu-answered nil)
-        (alonso--confirm-menu))
-    (condition-case nil
-        (alonso--confirm-answer
-         (alonso--ask-user-trust
-          (alonso--confirm-question name input)))
-      (quit (alonso--confirm-answer 'deny)))))
+A `high' risk call (see `alonso--confirm-risk') always asks for a typed
+`yes' through `alonso--ask-user-typed', so a one-keystroke answer only
+approves low/medium calls.  Otherwise opens the transient
+`alonso--confirm-menu' when transient is available; without it, falls
+back to `alonso--ask-user-trust'.  Each path applies the answer via
+`alonso--confirm-answer', which is also the single seam the batch tests
+stub to answer without a menu.  Closing a prompt without answering is
+treated as a deny by the `quit' handler here, so the turn never hangs."
+  (let ((question (alonso--confirm-question name input
+                                            (alonso--confirm-risk)))
+        (risk (alonso--confirm-risk)))
+    (cond
+     ((equal risk "high")
+      (condition-case nil
+          (alonso--confirm-answer (alonso--ask-user-typed question))
+        (quit (alonso--confirm-answer 'deny))))
+     ((fboundp 'alonso--confirm-menu)
+      (setq alonso--menu-answered nil)
+      (alonso--confirm-menu))
+     (t
+      (condition-case nil
+          (alonso--confirm-answer (alonso--ask-user-trust question))
+        (quit (alonso--confirm-answer 'deny)))))))
 
 (defun alonso--confirm-answer (answer)
   "Apply ANSWER (`run', `deny' or `trust') to the pending confirmation.
@@ -549,7 +744,7 @@ path in `alonso--confirm-ask'."
       ('trust
        ;; Pause to pick a scope; `--trust-finish' runs this tool (as
        ;; `[trusted]') and continues the rest of the batch.
-       (alonso--trust-pause name input id rest denied))
+       (alonso--trust-pause name input id rest denied (plist-get ctx :risk)))
       (_ ;; run once
        (alonso--record-tool-confirmation name input t)
        (alonso--dispatch-tool-guarded name input id)

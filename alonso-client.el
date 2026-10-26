@@ -55,6 +55,10 @@
 (declare-function alonso--on-cancelled "alonso-ui")
 (declare-function alonso--show-tool-call "alonso-tools")
 (declare-function alonso--schedule-confirm "alonso-tools")
+;; The trust class key of `curl' is the URL's host, and the URL is split by
+;; the same function the display uses, so what is shown and what is trusted
+;; can never disagree.
+(declare-function alonso--curl-url-parts "alonso-tools")
 (declare-function alonso--stop-spinner "alonso-ui")
 
 ;;;###autoload
@@ -215,10 +219,13 @@ Mutually exclusive with `alonso-prune'.  Off by default."
   "The llm-bridge subprocess.")
 
 (defvar alonso-pending-tools nil
-  "Alist of (:id id :name name :input input) for tool calls awaiting results.")
+  "Alist of tool calls awaiting results.
+Each entry is (:id id :name name :input input . meta), where META is the
+confirmation detail the bridge sends along with a `tool_confirm'
+\(:segments :risk :tainted); see `alonso--confirm-meta'.")
 
 (defvar alonso--confirm-queue nil
-  "Queue of (:id :name :input) tool calls awaiting confirmation.
+  "Queue of (:id :name :input . meta) tool calls awaiting confirmation.
 Each tool call in the queue is confirmed individually (one question per
 tool), even when several arrive together.")
 
@@ -227,11 +234,13 @@ tool), even when several arrive together.")
 
 (defvar alonso--confirm-context nil
   "Pending tool call while the confirmation menu is open.
-A plist (:name :input :id :rest :denied) saved by
+A plist (:name :input :id :rest :denied :risk) saved by
 `alonso--confirm-next' just before asking and consumed by
 `alonso--confirm-answer'.  :rest is the remaining queue (the
-tool calls after the current one) and :denied is non-nil when an earlier
-tool call of the same batch was denied (so the rest are auto-denied).")
+tool calls after the current one), :denied is non-nil when an earlier
+tool call of the same batch was denied (so the rest are auto-denied) and
+:risk is the level the bridge reported (`high' forces a typed answer, see
+`alonso--confirm-ask').")
 
 (defvar alonso--menu-answered nil
   "Non-nil when the last confirmation/trust menu key was pressed.
@@ -284,17 +293,27 @@ is not known by the bridge.")
 ;;; Trust scope — tools the user decided to run without asking again
 
 (defvar alonso--trust-specific nil
-  "Alist of (tool-name . input-hash) trusted for this specific call only.
-A mutating tool call is run without asking when its input hash is `equal'
-to the one recorded here under its name.")
+  "Alist of (tool-name . input-key) trusted for this specific call only.
+A mutating tool call is run without asking when its canonical input (see
+`alonso--input-key') is `equal' to the one recorded here under its name.")
 
 (defvar alonso--trust-class nil
   "Alist of (tool-name . class-key) trusted for a whole class of calls.
-The class key is computed by `alonso--trust-class-key' (`shell'
-uses the first command token; the path tools the file's directory).")
+The class key is computed by `alonso--trust-class-key' (`shell' uses the
+program of a single-command line; the path tools the file's directory;
+`curl' the URL's host).")
+
+(defvar alonso--trust-tools nil
+  "List of tool names trusted for every call in this session.
+This is what the menu's `all' scope records: the trust was picked from one
+tool's confirmation menu, so it covers that tool only, never the tools the
+user was not looking at.  `alonso-trust-reset' clears it.")
 
 (defvar alonso--trust-all nil
-  "Non-nil when every tool call is trusted without asking.")
+  "Non-nil when EVERY tool call is trusted without asking.
+An escape hatch for Lisp callers and tests only: no menu offers it, because
+a scope picked while confirming one tool must not silently vouch for every
+other tool of the session.")
 
 (defvar alonso--trust-context nil
   "Paused batch-confirmation context while the user picks a trust scope.
@@ -319,6 +338,7 @@ Called when the bridge is restarted or shut down, ending the session."
         alonso--turn-finalized nil
         alonso--trust-specific nil
         alonso--trust-class nil
+        alonso--trust-tools nil
         alonso--trust-all nil
         alonso--trust-context nil))
 
@@ -540,12 +560,13 @@ here, so a launch failure can be reported instead of a bare timeout.")
 
 Read-only tools (read/grep/glob/knowledge) are executed by the bridge itself
 in the same turn, so a `tool_call' needs no action from the client — it is
-only displayed.  Mutating tools (shell/write/search_replace) arrive as
-`tool_confirm' events instead (see `alonso--on-tool-confirm')."
+only displayed.  Mutating tools (shell/write/search_replace/curl, and a
+`knowledge' write) arrive as `tool_confirm' events instead (see
+`alonso--on-tool-confirm')."
   (let ((id (gethash "id" ev))
         (name (gethash "name" ev))
         (input (gethash "input" ev)))
-    (alonso--show-tool-call id name input)
+    (alonso--show-tool-call id name input (alonso--confirm-meta ev))
     ;; Mark the pending separator so the model's next output (thinking or
     ;; response) is separated from the tool display by two blank lines —
     ;; same as the mutating path does in `alonso--send-tool-confirm'.  The
@@ -560,18 +581,23 @@ trust) and answers by sending a `tool_confirm' command, upon which the bridge
 executes the tool itself.  With confirmation disabled the tool is approved
 right away.  The tool is tracked in `alonso-pending-tools' until the client
 answers (removed when approved, or via `cancel' when denied)."
-  (let ((id (gethash "id" ev))
-        (name (gethash "name" ev))
-        (input (gethash "input" ev)))
-    (push (list :id id :name name :input input) alonso-pending-tools)
+  (let* ((id (gethash "id" ev))
+         (name (gethash "name" ev))
+         (input (gethash "input" ev))
+         (meta (alonso--confirm-meta ev))
+         (tc (append (list :id id :name name :input input) meta)))
+    (push tc alonso-pending-tools)
     (if (not alonso-confirm-tools)
         (progn
           ;; confirmation disabled: show and approve right away
-          (alonso--show-tool-call id name input)
+          (alonso--show-tool-call id name input meta)
           (alonso--dispatch-tool-guarded name input id))
-      ;; queue it and schedule its (individual) confirmation.  It is shown one
-      ;; at a time in `--confirm-pending', not here.
-      (push (list :id id :name name :input input) alonso--confirm-queue)
+      ;; Queue it and schedule its (individual) confirmation.  It is shown one
+      ;; at a time in `--confirm-pending', not here.  Appending (rather than
+      ;; pushing) keeps the model's order: the bridge emits every
+      ;; `tool_confirm' of the turn in one go, so the questions would
+      ;; otherwise be asked in reverse.
+      (setq alonso--confirm-queue (append alonso--confirm-queue (list tc)))
       (alonso--schedule-confirm))))
 
 (defun alonso--send-tool-confirm (id)
@@ -602,6 +628,24 @@ holds the pending tool call."
   "Get KEY from INPUT (a hash-table parsed from JSON), or nil."
   (when (hash-table-p input)
     (gethash key input)))
+
+(defun alonso--hval-true (input key)
+  "Return non-nil when KEY of INPUT (a JSON hash table) is a true boolean.
+`json-parse-string' yields the symbol `:false' for JSON false (it is not
+nil), so a plain `gethash' test would take a false value for true."
+  (let ((value (alonso--hval input key)))
+    (and value (not (eq value :false)) (not (eq value :json-false)))))
+
+(defun alonso--confirm-meta (ev)
+  "Return the confirmation metadata of the tool event EV.
+A plist (:segments :risk :tainted) with the detail the bridge attaches to a
+tool call since the prompt-injection hardening: the commands a `shell'
+one-liner actually runs, its coarse risk level and whether its arguments
+repeat content fetched earlier in the session.  All of them are optional
+\(`omitempty' on the bridge), so an older bridge yields an all-nil plist."
+  (list :segments (alonso--hval ev "segments")
+        :risk (alonso--hval ev "risk")
+        :tainted (alonso--hval-true ev "tainted")))
 
 ;;; Tool execution lives in the bridge (llm-bridge), not in the client.
 ;;
@@ -764,9 +808,20 @@ reported as a bare timeout."
 
 ;;; Tool decision logic — read-only classification and trust scope
 
-(defun alonso--tool-read-only-p (name)
-  "Return non-nil if tool NAME is read-only (needs no confirmation)."
-  (memq (intern name) '(read grep glob knowledge)))
+(defun alonso--tool-read-only-p (name &optional input)
+  "Return non-nil if tool NAME with INPUT is read-only (needs no confirmation).
+The static list is `read', `grep' and `glob'.  `knowledge' is classified
+per call, mirroring the bridge: `show' and `search' only read the store,
+while `add', `delete' and `reset' write to it.  Anything we cannot classify
+\(no command, a non-string command, an unknown one) counts as mutating, so
+a note planted by an injected page is always offered to the human.  `curl'
+fetches from the network, so it is never read-only either."
+  (cond
+   ((equal name "knowledge")
+    (let ((cmd (alonso--hval input "command")))
+      (and (stringp cmd)
+           (member (downcase (string-trim cmd)) '("show" "search")))))
+   (t (and (memq (intern-soft name) '(read grep glob)) t))))
 
 (defun alonso--dispatch-tool-guarded (name input id)
   "Approve tool NAME with INPUT and ID, asking the bridge to run it.
@@ -774,17 +829,111 @@ reported as a bare timeout."
 tool), so there is no local execution error to report."
   (alonso--dispatch-tool name input id))
 
-(defun alonso--trust-class-key (name input)
+(defun alonso--curl-host-key (url)
+  "Return the host of URL, the class key trusted for `curl'.
+The scheme, a `user:password@' prefix, the port and the path/query are
+dropped, and the result is downcased, so
+\"https://user:pw@Example.COM:8443/a?b=c\" yields \"example.com\"; a URL
+without a scheme (\"example.com/a\") yields \"example.com\" as well.  The
+port is dropped on purpose: the host is what identifies where the data goes,
+and a public port is noise.  Returns nil when URL is missing, is not a
+string, or yields no host at all, so a call nobody can pin to a single host
+is never covered by a host trust."
+  (when (and (stringp url) (not (string-empty-p (string-trim url))))
+    (let ((authority (nth 1 (alonso--curl-url-parts (string-trim url)))))
+      ;; A schemeless URL arrives whole in AUTHORITY: keep the authority only.
+      (setq authority (car (split-string (or authority "") "[/?#]")))
+      ;; Drop `user:password@' — the host is what follows the last `@'.
+      (when (string-match "@\\(.*\\)\\'" authority)
+        (setq authority (match-string 1 authority)))
+      ;; Drop the port, honoring the bracketed IPv6 form (`[::1]:8080').
+      (setq authority
+            (if (string-prefix-p "[" authority)
+                (if (string-match "\\`\\(\\[[^]]*\\]\\)" authority)
+                    (match-string 1 authority)
+                  authority)
+              (car (split-string authority ":"))))
+      (setq authority (downcase authority))
+      (unless (string-empty-p authority) authority))))
+
+(defconst alonso--shell-inert-tokens
+  '("cd" "pushd" "popd" "set" "unset" "export" "source" "." ":"
+    "true" "false" "alias" "umask" "ulimit" "shift" "exit" "return")
+  "First tokens of a `shell' command that name nothing worth trusting.
+`cd ~/x' says where to run, not what: a class trust on `cd' would cover
+every command that merely changes directory first.  A line whose first
+token is one of these gets no class key, so the menu offers no `c' for it.")
+
+(defun alonso--shell-single-command-p (cmd)
+  "Return non-nil when CMD is a single shell command.
+A separator (`;', `&&', `||', `|', `|&', a lone `&' or a newline) makes the
+line run more than one command, and the first token is then a poor name for
+it — `cd /tmp && rm -rf x' would be trusted as `cd', which covers every
+command that starts with a `cd'.  The `&' of a redirect (`2>&1', `>&2',
+`<&3', `&>', `&>>') is not a separator, and neither is a separator inside
+quotes or behind a backslash."
+  (let ((i 0) (n (length cmd)) (quote nil) (escape nil) (single t))
+    (while (and single (< i n))
+      (let ((ch (aref cmd i)))
+        (cond
+         (escape (setq escape nil))
+         ((and (eq ch ?\\) (not (eq quote ?\'))) (setq escape t))
+         (quote (when (eq ch quote) (setq quote nil)))
+         ((memq ch '(?\' ?\")) (setq quote ch))
+         ((memq ch '(?\; ?\n ?|)) (setq single nil))
+         ((eq ch ?&)
+          ;; A `&' starts another command unless it belongs to a redirect.
+          (unless (or (and (> i 0) (memq (aref cmd (1- i)) '(?< ?>)))
+                      (and (> n (1+ i)) (eq (aref cmd (1+ i)) ?>)))
+            (setq single nil)))))
+      (setq i (1+ i)))
+    single))
+
+(defun alonso--shell-class-key (input)
+  "Return the class key of a `shell' INPUT, or nil when it has none.
+The key is the program of a single-command line (`git' for `git status'),
+so that \"This class of calls: git\" covers exactly that program.  A line
+that runs several commands, an assignment prefix (`FOO=1 ...') and a line
+whose first token is inert (see `alonso--shell-inert-tokens') have no key:
+the menu then offers no `c' and the call can be trusted only per call
+\(`s') or per tool (`a')."
+  (let ((cmd (alonso--hval input "command")))
+    (when (stringp cmd)
+      (setq cmd (string-trim cmd))
+      (when (and (not (string-empty-p cmd))
+                 (alonso--shell-single-command-p cmd)
+                 (string-match "\\`\\([^[:space:]]+\\)" cmd))
+        (let ((token (match-string 1 cmd)))
+          (unless (or (member (downcase token) alonso--shell-inert-tokens)
+                      (string-match-p "=" token))
+            token))))))
+
+(defun alonso--trust-class-key (name input &optional risk)
   "Return the class key for tool NAME with INPUT, or nil when no class.
-`shell' uses the first token of its `command' (e.g. `sed'); `write' and
-`search_replace' use the directory of `path' (sub-directories are covered
-by the prefix match in `--class-prefix-p'); every other tool has no class
-key."
+`shell' uses the program of a single-command line (see
+`alonso--shell-class-key'); `write' and `search_replace' use the directory
+of `path' (sub-directories are covered by the prefix match in
+`--class-prefix-p'); `curl' uses the host of its `url' (see
+`alonso--curl-host-key'); every other tool has no class key.
+
+RISK is the level the bridge reported for the call, when known.  A `shell'
+line that is not `low' risk gets no class: `git commit' is medium and
+`git push --force' is high, and the class of `git' should be offered on a
+harmless `git status', not on the command that raised the tag.  On the
+comparison path (`alonso--trusted-p') RISK is nil and only the shape of the
+command decides, which is what keeps recording and matching consistent —
+a stricter recording can only make a trust rarer, never mismatched.
+
+`knowledge' deliberately has no class: trusting a whole class of KB writes
+would let a note planted by an injected page skip the human (and the KB is
+read by every later session).  For `curl' the unit is the host, not the
+tool: trusting `example.com' must not trust `elsevil.example.com'."
   (cond
    ((equal name "shell")
-    (let ((cmd (alonso--hval input "command")))
-      (when (and cmd (string-match "\\([^[:space:]]+\\)" cmd))
-        (match-string 1 cmd))))
+    (when (or (null risk) (equal risk "low"))
+      (alonso--shell-class-key input)))
+   ((equal name "curl")
+    (alonso--curl-host-key (alonso--hval input "url")))
    ((member name '("write" "search_replace"))
     (let ((path (alonso--hval input "path")))
       (when path
@@ -793,47 +942,102 @@ key."
 
 (defun alonso--class-prefix-p (name key candidate)
   "Return non-nil if the stored class KEY covers CANDIDATE for tool NAME.
-For `shell' the two must be `equal' (exact command token).  For the path
-tools (`write', `search_replace') CANDIDATE is covered when KEY is a
-directory prefix of it, so sub-directories are trusted too."
+For `shell' (a command token) and `curl' (a host) the two must be `equal' —
+exactly that token, exactly that host: `sed' does not cover `sedx' and
+`example.com' does not cover `example.com.evil.tld'.  For the path tools
+\(`write', `search_replace') CANDIDATE is covered when KEY is a directory
+prefix of it, so sub-directories are trusted too."
   (and key candidate
-       (if (equal name "shell")
+       (if (member name '("shell" "curl"))
            (equal key candidate)
          (string-prefix-p key candidate))))
 
+(defun alonso--input-key (input)
+  "Return a canonical form of tool INPUT for the `specific' trust scope.
+Every `tool_confirm' arrives as a freshly parsed hash table, and `equal' on
+hash tables is true only for the very same object — so recording the payload
+itself would never match the next confirmation, and \"this exact call\"
+would silently ask again.  This rebuilds the payload as a key-sorted alist
+\(recursing into nested tables and conses) so that two distinct objects
+with the same content compare `equal'."
+  (cond
+   ((hash-table-p input)
+    (cons :hash-table
+          (mapcar (lambda (key)
+                    (cons key (alonso--input-key (gethash key input))))
+                  (sort (let (keys)
+                          (maphash (lambda (key _value) (push key keys)) input)
+                          keys)
+                        (lambda (a b)
+                          (string< (format "%s" a) (format "%s" b)))))))
+   ((consp input)
+    (cons (alonso--input-key (car input))
+          (alonso--input-key (cdr input))))
+   (t input)))
+
 (defun alonso--trusted-p (name input)
   "Return non-nil when tool NAME with INPUT is trusted.
-Trusted when `alonso--trust-all' is set, or the tool's class key is
-covered by a recorded class trust, or this exact input was recorded for the
-tool."
+Trusted when `alonso--trust-all' is set, or NAME was trusted for every call
+\(the `all' scope), or the tool's class key is covered by a recorded class
+trust, or this exact input was recorded for the tool."
   (or alonso--trust-all
+      (member name alonso--trust-tools)
       (let* ((key (alonso--trust-class-key name input))
              (class (cdr (assoc name alonso--trust-class))))
         (and key (alonso--class-prefix-p name class key)))
       (let ((specific (cdr (assoc name alonso--trust-specific))))
-        (and specific (equal specific input)))))
+        (and specific (equal specific (alonso--input-key input))))))
 
-(defun alonso--trust-record (scope name input)
+(defun alonso--trust-record (scope name input &optional risk)
   "Record a trust for tool NAME with INPUT in SCOPE ('specific/'class/'all).
-Returns non-nil when a trust was actually recorded.  For `class' a non-nil
-class key is required, otherwise nothing is recorded."
+RISK is the level the bridge reported, when known; it can only make a
+`class' trust rarer (see `alonso--trust-class-key').  Returns non-nil when
+a trust was actually recorded.  For `class' a non-nil class key is
+required, otherwise nothing is recorded; `all' records the single tool
+NAME (not every tool), so it needs a name."
   (pcase scope
     ('all
-     (setq alonso--trust-all t))
+     (when (stringp name)
+       (setq alonso--trust-tools (cons name alonso--trust-tools))
+       (force-mode-line-update t)
+       t))
     ('specific
      (setq alonso--trust-specific
-           (cons (cons name input)
+           (cons (cons name (alonso--input-key input))
                  (cl-remove-if (lambda (p) (equal (car p) name))
                                alonso--trust-specific)))
+     (force-mode-line-update t)
      t)
     ('class
-     (let ((key (alonso--trust-class-key name input)))
+     (let ((key (alonso--trust-class-key name input risk)))
        (when key
          (setq alonso--trust-class
                (cons (cons name key)
                      (cl-remove-if (lambda (p) (equal (car p) name))
-                                   alonso--trust-class))))))
+                                   alonso--trust-class)))
+         (force-mode-line-update t)
+         t)))
     (_ nil)))
+
+(defun alonso-trust-reset ()
+  "Forget every tool trust granted in this session.
+A trust silences the confirmation for the tools it covers (see
+`alonso--trusted-p'), and one picked by accident would keep doing so for
+the rest of the session — hence this way out, also reachable from the
+mode-line (which names the active grants).  Returns the number of grants
+forgotten."
+  (interactive)
+  (let ((n (+ (length alonso--trust-specific)
+              (length alonso--trust-class)
+              (length alonso--trust-tools)
+              (if alonso--trust-all 1 0))))
+    (setq alonso--trust-specific nil
+          alonso--trust-class nil
+          alonso--trust-tools nil
+          alonso--trust-all nil)
+    (force-mode-line-update t)
+    (message "alonso: cleared %d trust grant(s)" n)
+    n))
 
 (provide 'alonso-client)
 
