@@ -691,6 +691,40 @@ returned and ARGS the arguments it received."
       (alonso--handle-line (alonso-client-tests--event-json "event" "turn_end")))
     (should (hash-table-p got))))
 
+(ert-deftest alonso-client--handle-line-parses-null-fields-as-nil ()
+  :tags '(client)
+  ;; The bridge sends `null' for the context of a model outside its table and
+  ;; for the cost of an unpriced one.  Without `:null-object nil' they arrive
+  ;; as the symbol `:null', which is non-nil and signals in the mode-line
+  ;; arithmetic.
+  (let (got)
+    (cl-letf (((symbol-function 'alonso--on-turn-end) (lambda (ev) (setq got ev))))
+      (alonso--handle-line
+       "{\"event\":\"turn_end\",\"context_pct\":null,\"cost_usd\":null,\"session_cost_usd\":null}"))
+    (should (and (hash-table-p got)
+                 (null (gethash "context_pct" got))
+                 (null (gethash "cost_usd" got))
+                 (null (gethash "session_cost_usd" got))))))
+
+(ert-deftest alonso-client--null-context-from-the-wire-does-not-signal ()
+  :tags '(client)
+  ;; End to end: the parse feeds the mode-line formatter.  A `:null' here used
+  ;; to reach `(* 100 pct)' and signal on every turn of a model the bridge has
+  ;; no context window for.
+  (unwind-protect
+      (progn
+        (alonso--reset-session)
+        (alonso--handle-line
+         (concat "{\"event\":\"turn_end\",\"model\":\"unknown\","
+                 "\"input_tokens\":1,\"output_tokens\":1,"
+                 "\"context_pct\":null,\"context_tokens\":null,"
+                 "\"context_window\":null,\"cost_usd\":null,"
+                 "\"session_cost_usd\":null}"))
+        (should (and (null alonso-session-context-pct)
+                     (null alonso-session-cost-usd)
+                     (equal "○ 0% (0/?)" (alonso--format-context)))))
+    (alonso--reset-session)))
+
 (ert-deftest alonso-client--handle-line-dispatches-files-changed ()
   :tags '(client)
   (let (got)

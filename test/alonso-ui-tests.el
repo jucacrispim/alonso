@@ -254,6 +254,107 @@ right (the `alonso-open' layout) and makes the pair atomic."
                (zerop alonso-session-cache-miss-tokens)
                (null alonso-session-model))))
 
+;;; Turn duration and cost (llm-bridge 0.8)
+
+(defun alonso-ui-tests--feed-timed-turn (duration cost session-cost)
+  "Feed a `turn_end' carrying DURATION (ms), COST and SESSION-COST (USD)."
+  (let ((ev (make-hash-table :test 'equal)))
+    (puthash "event" "turn_end" ev)
+    (puthash "stop_reason" "END_TURN" ev)
+    (puthash "model" "deepseek-flash" ev)
+    (puthash "input_tokens" 30 ev)
+    (puthash "output_tokens" 15 ev)
+    (puthash "cache_hit_tokens" 900 ev)
+    (puthash "cache_miss_tokens" 120 ev)
+    (when duration (puthash "duration_ms" duration ev))
+    (when cost (puthash "cost_usd" cost ev))
+    (when session-cost (puthash "session_cost_usd" session-cost ev))
+    (alonso--on-turn-end ev)))
+
+(ert-deftest alonso-ui--format-duration-under-a-minute ()
+  :tags '(ui)
+  (should (and (equal "8.4s" (alonso--format-duration 8400))
+               (equal "0.5s" (alonso--format-duration 500)))))
+
+(ert-deftest alonso-ui--format-duration-from-a-minute-up ()
+  :tags '(ui)
+  (should (and (equal "1m02s" (alonso--format-duration 62000))
+               (equal "10m00s" (alonso--format-duration 600000)))))
+
+(ert-deftest alonso-ui--format-cost-below-a-dollar ()
+  :tags '(ui)
+  (should (equal "$0.0123" (alonso--format-cost 0.0123))))
+
+(ert-deftest alonso-ui--format-cost-from-a-dollar-up ()
+  :tags '(ui)
+  (should (and (equal "$1.23" (alonso--format-cost 1.234))
+               (equal "$12.00" (alonso--format-cost 12)))))
+
+(ert-deftest alonso-ui--turn-summary-carries-duration-and-cost ()
+  :tags '(ui)
+  (unwind-protect
+      (progn
+        (alonso-ui-tests--feed-timed-turn 8400 0.0123 0.0123)
+        (let ((buf (with-current-buffer (alonso--get-buffer)
+                     (buffer-substring-no-properties (point-min) (point-max)))))
+          (should (string-match-p
+                   (regexp-quote (concat "[model=deepseek-flash | turn: sent 30,"
+                                         " received 15, cache 900/120"
+                                         " | 8.4s $0.0123]"))
+                   buf))))
+    (alonso--reset-session)))
+
+;; A bridge older than 0.8 sends no timing field, and an unpriced turn sends
+;; both costs as null: either way the tail is absent, not shown as zero.
+
+(ert-deftest alonso-ui--turn-summary-omits-timing-without-the-fields ()
+  :tags '(ui)
+  (unwind-protect
+      (progn
+        (alonso--reset-session)
+        (alonso-ui-tests--feed-timed-turn nil nil nil)
+        (let ((buf (with-current-buffer (alonso--get-buffer)
+                     (buffer-substring-no-properties (point-min) (point-max)))))
+          (should (string-match-p
+                   (regexp-quote (concat "[model=deepseek-flash | turn: sent 30,"
+                                         " received 15, cache 900/120]"))
+                   buf))
+          (should-not (string-match-p "| 0" buf))))
+    (alonso--reset-session)))
+
+;; The two cost fields go null together when one call of the turn used an
+;; unpriced model, and the next turn reports the real total again.  Blanking
+;; the total here would drop it off the mode line for that turn.
+
+(ert-deftest alonso-ui--unpriced-turn-keeps-the-session-cost ()
+  :tags '(ui)
+  (unwind-protect
+      (progn
+        (alonso--reset-session)
+        (alonso-ui-tests--feed-timed-turn 1000 0.5 0.5)
+        (should (= 0.5 alonso-session-cost-usd))
+        (alonso-ui-tests--feed-timed-turn 1000 nil nil)
+        (should (= 0.5 alonso-session-cost-usd))
+        (should (string-match-p (regexp-quote "$0.5000")
+                                (alonso--mode-line-session))))
+    (alonso--reset-session)))
+
+(ert-deftest alonso-ui--mode-line-session-shows-the-cost ()
+  :tags '(ui)
+  (unwind-protect
+      (progn
+        (alonso--reset-session)
+        (alonso-ui-tests--feed-timed-turn 1000 0.0123 0.42)
+        (should (string-match-p (regexp-quote "⚡900/120 $0.4200]")
+                                (alonso--mode-line-session))))
+    (alonso--reset-session)))
+
+(ert-deftest alonso-ui--reset-clears-the-session-cost ()
+  :tags '(ui)
+  (setq alonso-session-cost-usd 1.5)
+  (alonso--reset-session)
+  (should (null alonso-session-cost-usd)))
+
 ;; A provider without prompt cache reports 0 hit / 0 miss: the mode-line must
 ;; omit the ⚡ fragment entirely (nothing to show).
 

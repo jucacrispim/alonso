@@ -74,6 +74,16 @@ answer (or a tool call) starts.  The model's answer is rendered as Markdown
 without changing the buffer text, so copying the conversation out is
 unaffected.
 
+Each turn ends with a summary line with the model, the turn's tokens and, when
+the bridge reports them, its wall-clock duration and its cost::
+
+   [model=deepseek-flash | turn: sent 30, received 15, cache 900/120 | 8.4s $0.0123]
+
+The duration includes the wait for a tool confirmation.  Both costs go blank
+together when a call of the turn used a model with no price in the bridge's
+``models.json``, and the next turn reports the total again.  A cancelled turn
+has neither, because it sends no ``turn_end``.
+
 In the input buffer:
 
 * ``C-c C-c`` sends the prompt (``alonso-send-input``).  ``RET`` inserts a
@@ -207,11 +217,11 @@ The input buffer's mode line (which hides the usual modes and line/column info)
 shows the prompt's context (the model and the session token usage) right next
 to the prompt being typed::
 
-   alonso-chat [<model>] [↑<in> ↓<out> ⚡<hit>/<miss>] <dial> <pct>% (<used>/<window>) [<overrides>]
+   alonso-chat [<model>] [↑<in> ↓<out> ⚡<hit>/<miss> $<cost>] <dial> <pct>% (<used>/<window>) [<overrides>]
 
-The session token block ``⚡`` only appears when ``hit + miss > 0``, and the
-request overrides (e.g. `` [thinking=on effort=high]``) only when one is set for
-the next prompt.
+The session token block ``⚡`` only appears when ``hit + miss > 0``, the cost
+only once the bridge reports one for the session, and the request overrides
+(e.g. `` [thinking=on effort=high]``) only when one is set for the next prompt.
 
 The conversation buffer's mode line keeps only the session state that is not
 about the prompt: its name, the active trust grants (``🔓shell``) and, as the

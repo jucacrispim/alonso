@@ -271,6 +271,10 @@ is not known by the bridge.")
   "Context size (tokens) sent in the last turn, or nil when unknown.")
 (defvar alonso-session-context-window nil
   "Static context window (tokens) of the model, or nil when unknown.")
+(defvar alonso-session-cost-usd nil
+  "Total cost (USD) of the session, summed by the bridge, or nil.
+A turn that used a model without a price in the bridge's `models.json'
+reports nil, which leaves the previous total in place.")
 
 (defvar alonso--current-turn-input-tokens 0
   "Input tokens accumulated in the current turn.")
@@ -322,6 +326,7 @@ Called when the bridge is restarted or shut down, ending the session."
         alonso-session-context-pct nil
         alonso-session-context-tokens nil
         alonso-session-context-window nil
+        alonso-session-cost-usd nil
         alonso--current-turn-input-tokens 0
         alonso--current-turn-output-tokens 0
         alonso--turn-finalized nil
@@ -591,8 +596,12 @@ here, so a launch failure can be reported instead of a bare timeout.")
 
 (defun alonso--handle-line (line)
   "Parse and dispatch a single JSON event LINE from the bridge."
+  ;; The bridge sends `null' for a value it does not know: the context of a
+  ;; model outside its table, the cost of an unpriced one.  `:null-object nil'
+  ;; turns that into nil, so the readers only have to check for nil.
   (let ((ev (ignore-errors (json-parse-string line
-                               :object-type 'hash-table :array-type 'list))))
+                               :object-type 'hash-table :array-type 'list
+                               :null-object nil))))
     (if (null ev)
         ;; Not a JSON event: typically stderr (the sandbox launcher's error,
         ;; a crash message).  Keep it so `alonso--ensure-ready' can explain a

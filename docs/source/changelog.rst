@@ -22,6 +22,19 @@ Added
   a token budget. An older bridge, which sends ``{"event":"ready"}`` alone,
   falls back to ``alonso-provider-choices`` and
   ``alonso-reasoning-effort-choices``.
+- The turn summary carries the wall-clock duration and the cost of the turn
+  when the bridge reports them, e.g. ``| 8.4s $0.0123``. The session cost joins
+  the token block in the input mode line, and stays there while a turn on an
+  unpriced model reports ``null`` for it.
+
+Fixed
+~~~~~
+
+- JSON ``null`` now arrives as nil. ``json-parse-string`` turns it into the
+  symbol ``:null``, which is non-nil, so the ``context_pct`` of a model the
+  bridge has no window for reached ``(* 100 pct)`` in the mode line and
+  signalled. The new ``cost_usd``/``session_cost_usd`` fields would fail the
+  same way.
 
 Changed
 ~~~~~~~

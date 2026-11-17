@@ -481,6 +481,24 @@ two decimals and no trailing zeros, e.g. 999, 1000 -> \"1k\", 1500 ->
    ((< n 999995) (concat (alonso--format-tokens--scaled n 1000.0) "k"))
    (t (concat (alonso--format-tokens--scaled n 1000000.0) "M"))))
 
+(defun alonso--format-duration (ms)
+  "Format the duration MS (milliseconds) for the turn summary.
+Under a minute, one decimal: 8400 -> \"8.4s\".  From a minute up, the
+minutes and the two-digit seconds: 62000 -> \"1m02s\"."
+  (let ((secs (/ ms 1000.0)))
+    (if (< secs 60)
+        (format "%.1fs" secs)
+      (let ((total (round secs)))
+        (format "%dm%02ds" (/ total 60) (% total 60))))))
+
+(defun alonso--format-cost (usd)
+  "Format the USD amount USD for the turn summary and the mode line.
+Below one dollar, four decimals (\"$0.0123\"), because a turn usually costs
+a fraction of a cent.  From one dollar up, two (\"$1.23\")."
+  (if (>= usd 1)
+      (format "$%.2f" usd)
+    (format "$%.4f" usd)))
+
 (defconst alonso--context-dial-chars [?○ ?◔ ?◑ ?◕ ?●]
   "Circle glyphs from empty to full, used as the context-usage dial.")
 
@@ -511,7 +529,8 @@ denominator is shown as \"?\"."
 (defun alonso--on-turn-end (ev)
   "Handle a `turn_end' event EV.
 Finalize turn tokens, accumulate session usage and show a per-turn summary
-with the model."
+with the model.  The summary also carries the turn's wall-clock duration and
+its cost when the bridge reports them."
   (alonso--render-answer)
   (alonso--stop-spinner)
   (setq alonso-in-turn nil
@@ -525,7 +544,11 @@ with the model."
         (context-pct (gethash "context_pct" ev))
         (context-tokens (gethash "context_tokens" ev))
         (context-window (gethash "context_window" ev))
-        (model (gethash "model" ev)))
+        (model (gethash "model" ev))
+        (duration (gethash "duration_ms" ev))
+        (cost (gethash "cost_usd" ev))
+        (session-cost (gethash "session_cost_usd" ev))
+        (timing '()))
     (let ((inc-in (- input alonso--current-turn-input-tokens))
           (inc-out (- output alonso--current-turn-output-tokens)))
       (setq alonso-session-input-tokens
@@ -543,11 +566,24 @@ with the model."
     (setq alonso-session-context-pct context-pct
           alonso-session-context-tokens context-tokens
           alonso-session-context-window context-window)
+    ;; A turn with one call on an unpriced model reports nil for both costs,
+    ;; and the next turn reports the real total again.  Overwriting here would
+    ;; blank the session cost on screen for that turn.
+    (when session-cost
+      (setq alonso-session-cost-usd session-cost))
+    (when duration
+      (push (alonso--format-duration duration) timing))
+    (when cost
+      (push (alonso--format-cost cost) timing))
+    (setq timing (nreverse timing))
     (alonso--insert-propertized
-     (format "\n[model=%s | turn: sent %s, received %s, cache %s/%s]\n"
+     (format "\n[model=%s | turn: sent %s, received %s, cache %s/%s%s]\n"
              (or model "?")
              (alonso--format-tokens input) (alonso--format-tokens output)
-             (alonso--format-tokens cache-hit) (alonso--format-tokens cache-miss))
+             (alonso--format-tokens cache-hit) (alonso--format-tokens cache-miss)
+             (if timing
+                 (concat " | " (mapconcat #'identity timing " "))
+               ""))
      'face 'alonso-separator-face))
   (force-mode-line-update t)
   (alonso--show-answer-start))
@@ -919,12 +955,13 @@ there is one (see `alonso-yank')."
       (yank-media-handler "image/.*" #'alonso--yank-media-image))))
 
 (defun alonso--mode-line-session ()
-  "Return the mode-line fragment with the session token usage.
-Shows tokens sent (↑, input), tokens received (↓, output) and the
-prompt-cache hit/miss totals (⚡, shown only when the provider reports any)
-inside brackets; the context usage (a dial glyph that fills as the window is
-consumed, then the percentage and used/window tokens) follows outside them,
-e.g. \" [↑12 ↓8 ⚡900/124] ◑ 42% (420k/1M)\".  It is shown in the input
+  "Return the mode-line fragment with the session usage and cost.
+Shows tokens sent (↑, input), tokens received (↓, output), the prompt-cache
+hit/miss totals (⚡, shown only when the provider reports any) and the
+session cost (shown only once the bridge reports one) inside brackets.  The
+context usage (a dial glyph that fills as the window is consumed, then the
+percentage and used/window tokens) follows outside them, e.g.
+\" [↑12 ↓8 ⚡900/124 $0.42] ◑ 42% (420k/1M)\".  It is shown in the input
 buffer's mode line, next to the prompt (see
 `alonso--setup-input-mode-line')."
   (let* ((hit alonso-session-cache-hit-tokens)
@@ -933,6 +970,9 @@ buffer's mode line, next to the prompt (see
                     (format " ⚡%s/%s" (alonso--format-tokens hit)
                             (alonso--format-tokens miss))
                   ""))
+         (cost (if alonso-session-cost-usd
+                   (concat " " (alonso--format-cost alonso-session-cost-usd))
+                 ""))
          (ctx (alonso--format-context))
          (ctx (if (string-empty-p ctx)
                   ""
@@ -940,12 +980,12 @@ buffer's mode line, next to the prompt (see
                 ;; the literal percentage sign (and the space before the
                 ;; window) in the rendered mode line.
                 (concat " " (replace-regexp-in-string "%" "%%" ctx t t))))
-         (s (format " [↑%s ↓%s%s]%s"
+         (s (format " [↑%s ↓%s%s%s]%s"
                     (alonso--format-tokens alonso-session-input-tokens)
                     (alonso--format-tokens alonso-session-output-tokens)
-                    cache ctx)))
+                    cache cost ctx)))
     (propertize s 'help-echo
-                "↑ tokens sent · ↓ tokens received · ⚡ prompt-cache hit/miss · context dial (used/window)")))
+                "↑ tokens sent · ↓ tokens received · ⚡ prompt-cache hit/miss · session cost · context dial (used/window)")))
 
 (defun alonso--mode-line-request ()
   "Return the mode-line fragment with the thinking/effort overrides.
