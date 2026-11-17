@@ -233,7 +233,7 @@
       (should (and (null (alonso-tests--md-display "**"))
                    (eq (alonso-tests--md-face "**") 'shadow))))))
 
-;;; Clickable links — opening, the at-point lookup and the mouse handler
+;;; Clickable links: opening, the at-point lookup and the mouse handler
 
 (ert-deftest alonso-markdown--open-link-opens-the-url-at-point ()
   :tags '(markdown)
@@ -279,7 +279,7 @@
       (alonso--open-link-mouse 'some-event))
     (should (and moved (= 1 opened)))))
 
-;;; `alonso--md-line-end' — the line end extended over its newline
+;;; `alonso--md-line-end': the line end extended over its newline
 
 (ert-deftest alonso-markdown--md-line-end-extends-over-the-newline ()
   :tags '(markdown)

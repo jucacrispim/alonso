@@ -19,30 +19,16 @@
 
 ;;; Commentary:
 
-;; The "UI shell" of the Emacs llm-bridge integration: everything that touches
-;; buffers and windows but is not a self-contained renderer.  Concretely: the
-;; conversation/input buffers and their minor modes and keymaps, the insertion
-;; helpers every renderer builds on, the shared conversation state, the braille
-;; spinner and mode-line fragments, the event render handlers (chunks,
-;; thinking, turn summaries, errors, hooks), the `/project' command, the window
-;; layout (open/restart/kill, including the atomic group that makes the
-;; conversation and the input behave as a single window) and the `C-c C-a' prefix map.
+;; The "UI shell": the conversation and input buffers, their minor modes and
+;; keymaps, the insertion helpers, the shared conversation state, the braille
+;; spinner and mode-line fragments, the event render handlers, the `/project'
+;; command, the window layout (open/restart/kill) and the `C-c C-a' prefix
+;; map.
 ;;
-;; The three rendering/UX pieces live in sibling files that build on top of
-;; this one:
+;; The Markdown, image and tool-call pieces live in the leaf files.  They
+;; require this one, and this one reaches them back only at runtime.
 ;;
-;;   alonso-markdown.el — Markdown rendering of the model's answer (faces,
-;;     hidden markers, clickable links, code-block fontification).
-;;   alonso-image.el    — pasting/attaching images to a prompt (multimodal).
-;;   alonso-tools.el    — tool-call display, per-call confirmation and the
-;;     trust-scope menus.
-;;
-;; Those files require this one and reach back only through its public
-;; helpers; this file reaches their functions only at runtime (declared below),
-;; never at load time.  It requires alonso-client.el and talks to it through
-;; its public API.
-;;
-;; See alonso.el (the entry point) and alonso-client.el.
+;; Design notes are in docs/source/hacking/architecture.rst.
 
 ;;; Code:
 
@@ -210,7 +196,7 @@ to the beginning of the final answer taller than the window.")
   "Start a new answer segment if one is not already open.
 Also re-points `alonso--turn-answer-start' at this segment's start, so
 that a turn whose output is split (answer, thinking, answer) marks its
-*last* answer segment — the final answer — as the one to scroll back to
+*last* answer segment (the final answer) as the one to scroll back to
 when the turn ends."
   (unless alonso--answer-start
     (with-current-buffer (alonso--get-buffer)
@@ -236,10 +222,9 @@ stops writing (thinking, tool call, end of turn)."
 
 (defun alonso--render-answer-live ()
   "Re-render the pending answer segment without closing it.
-No-op when `alonso-render-markdown-live' is nil or no segment is
-open.  Called after every `chunk' so the formatting appears while the model
-is still writing.  Only complete constructs are rendered, so the answer is
-never shown with a half-written marker hidden."
+No-op when `alonso-render-markdown-live' is nil or no segment is open.
+Called after every `chunk' so the formatting appears while the model is
+still writing."
   (when (and alonso-render-markdown-live
              alonso--answer-start)
     (let ((start (marker-position alonso--answer-start)))
@@ -271,12 +256,12 @@ when there is no answer segment to scroll to."
 
 (defun alonso--pin-window-to-end ()
   "Re-anchor the conversation window at the end of the buffer.
-Called whenever the stream (re)starts after the window was deliberately
-scrolled away from the end: when a new prompt is started (a previous turn
+Called whenever the stream (re)starts after the user scrolled the window away
+from the end: when a new prompt is started (a previous turn
 left it scrolled back to its answer by `alonso--show-answer-start') and when
 the model resumes after a tool call (the confirmation scrolled the window to
 the tool line via `alonso--keep-question-visible', which may sit far above
-the end when the tool's output — e.g. a large diff — is taller than the
+the end when the tool's output (e.g. a large diff) is taller than the
 window).  While streaming the window only follows the output when it is
 already showing the end (see `alonso--insert-propertized'), so without
 re-anchoring a conversation window that is not selected would stop following
@@ -645,7 +630,7 @@ script's combined output is inserted as plain text."
        (concat "\n" (or output "") "\n"))))
   (force-mode-line-update t))
 
-;;; Step 5 — Conversation buffer and input buffer
+;;; Conversation buffer and input buffer
 
 (defvar alonso-mode-map
   (let ((map (make-sparse-keymap)))
@@ -673,7 +658,7 @@ script's combined output is inserted as plain text."
       ;; session trust grants and, at the very end, the status/spinner.  The
       ;; model and the session token usage belong to the input bar, next to
       ;; the prompt being typed (see `alonso--setup-input-mode-line'), and are
-      ;; dropped here — including on a buffer set up by an older version.
+      ;; dropped here, including on a buffer set up by an older version.
       ;; Drop the modes construct (it would only render "(Fundamental LB)",
       ;; noise for a chat log).
       (setq-local mode-line-modes "")
@@ -692,7 +677,7 @@ script's combined output is inserted as plain text."
         (setq-local mode-line-misc-info
                     (append mode-line-misc-info
                             (list '(:eval (alonso--mode-line-status))))))
-      ;; Hide the position (line/column/%) — the buffer is a chat log whose
+      ;; Hide the position (line/column/%).  The buffer is a chat log whose
       ;; size changes at every chunk, so the position counter would flicker
       ;; frantically during streaming and make the mode-line (and the
       ;; spinner) look unstable.
@@ -831,7 +816,7 @@ client-side turn state is still marked in progress here and closed by
 When non-nil (e.g. \"~/mysrc/\") the `/project' argument is taken as a
 project NAME and resolved to BASE/NAME, so `/project tupi' means
 `~/mysrc/tupi/'.  When nil (the default) the argument is taken as a PATH and
-expanded with `expand-file-name' — an absolute path, a `~' path or a path
+expanded with `expand-file-name': an absolute path, a `~' path or a path
 relative to `default-directory' all work."
   :type '(choice (const :tag "Argument is a path" nil)
                  (directory :tag "Base directory for project names"))
@@ -922,8 +907,8 @@ there is one (see `alonso-yank')."
   (when alonso-input-mode
     ;; Keep electric indentation out of this buffer.  The input is free-form
     ;; prose, and `electric-indent-mode' (on by default) reindents the previous
-    ;; line when RET inserts a newline, calling `delete-horizontal-space' on it
-    ;; — which silently deletes an inline image placeholder (carried by a
+    ;; line when RET inserts a newline, calling `delete-horizontal-space' on it,
+    ;; which silently deletes an inline image placeholder (carried by a
     ;; single space) sitting at the end of the line, dropping the attachment.
     (setq-local electric-indent-mode nil)
     ;; Let `yank-media' (and `alonso-yank', via it) insert clipboard
@@ -1002,7 +987,7 @@ buffer's mode-line (see `alonso--get-buffer')."
       ;; `alonso--on-pair-buffer-killed').
       (add-hook 'kill-buffer-hook #'alonso--on-pair-buffer-killed nil t)
       ;; Drop the modes construct (\"(Fundamental LBIn)\") and the position
-      ;; (line/column/%/\"All\") — the input bar should show only its name.
+      ;; (line/column/%/\"All\") and the position.  The input bar shows only its name.
       (setq-local mode-line-modes "")
       (setq-local mode-line-position nil)
       (setq-local mode-line-misc-info
@@ -1012,15 +997,10 @@ buffer's mode-line (see `alonso--get-buffer')."
 
 ;;; The conversation and the input behave as a single window (atomic window)
 
-;; `window-make-atom' (Emacs 27+) groups the two windows into one atomic
-;; window, so the structural window commands act on the pair as a unit:
-;; `delete-window' and `quit-window' close both and `delete-other-windows'
-;; keeps both.  The dedicated flags are what make `quit-window' (and a plain
-;; `switch-to-buffer' in one of them) treat each window as a fixed part of
-;; the group instead of swapping its buffer for an unrelated one.
-;; `window-atom' is not a persistent parameter by default, so saving and
-;; restoring window states (desktop.el, `window-state-put') would lose the
-;; group; register it as writable so it survives.
+;; `window-make-atom' (Emacs 27+) groups the two windows, so the structural
+;; window commands act on the pair as a unit.  `window-atom' is not a
+;; persistent parameter by default, so a saved window state would drop the
+;; group; register it as writable.
 
 (add-to-list 'window-persistent-parameters '(window-atom . writable))
 
@@ -1055,7 +1035,7 @@ Used when one of the two buffers is killed, so a lone window of the pair is
 never left on screen (the atomic window only collapses by itself when it is
 not the only window of the frame).  When the pair is the frame's only window
 Emacs refuses to delete its atomic windows, so the atom parameter is cleared
-first — the group is being torn down anyway."
+first: the group is being torn down anyway."
   (when (alonso--pair-window-parent)
     (let ((pair (list (get-buffer alonso-buffer-name)
                       (get-buffer alonso-input-buffer-name))))
@@ -1075,28 +1055,17 @@ either one closes both windows instead of leaving the survivor alone."
 
 ;;; Handing the pair's column over to other buffers
 
-;; The atomic group above is invisible to `display-buffer': it refuses to
-;; reuse the dedicated windows and it will not split an atomic window, so a
-;; buffer that asks to be shown "in another window" (a compilation buffer, a
-;; command such as `magit-status', ...) falls through to the fallback action
-;; and splits the window the user is working in instead of using the pair's
-;; column.  The `display-buffer-alist' entry below claims such buffers for the
-;; pair: the conversation window is reused over the full column height and the
-;; input window is deleted, so the newcomer takes the whole column.  Both
-;; buffers stay alive; the pair's layout is stashed and put back when the popup
-;; is dismissed (`q' or `C-x 0'), and `alonso-open' rebuilds the pair anyway.
-;;
-;; Only buffers that state no display policy of their own are claimed (the
-;; ACTION argument has no car): `display-buffer-same-window', `at-bottom',
-;; `pop-up-frame' and friends keep their usual meaning.  The entry is also
-;; skipped while the selected window is one of the two, so a popup never
-;; displaces the window being used to talk to the model.
+;; The atomic group is invisible to `display-buffer': it refuses to reuse the
+;; dedicated windows and it will not split an atomic window, so a buffer that
+;; asks for "another window" splits the one the user is working in.  The
+;; `display-buffer-alist' entry below gives it the pair's column instead.  The
+;; full reasoning is in docs/source/hacking/architecture.rst.
 
 (defcustom alonso-display-other-buffers-in-pair t
   "Whether buffers shown \"in another window\" may use the pair's column.
 When non-nil, a buffer that `display-buffer' would display in another window
-without stating a display policy of its own — a compilation buffer, a
-`magit-status' buffer and the like — is displayed in the column holding the
+without stating a display policy of its own (a compilation buffer, a
+`magit-status' buffer and the like) is displayed in the column holding the
 conversation and the input, instead of splitting the window the user is
 working in.  The conversation and input buffers stay alive (their windows are
 simply reused); `alonso-open' brings the pair back.  The policy is skipped
@@ -1126,7 +1095,7 @@ already-visible buffer is requested, and one of two situations holds:
     window is not one of the two (a popup from outside the pair); or
   - a takeover is already in effect (`alonso--pair-takeover-window') and the
     selected window is the takeover window or one of its follow-up windows (a
-    popup from inside the buffer that displaced the pair — e.g. a Magit diff
+    popup from inside the buffer that displaced the pair, e.g. a Magit diff
     while in Magit)."
   (and alonso-display-other-buffers-in-pair
        (null (car-safe action))
@@ -1147,15 +1116,10 @@ already-visible buffer is requested, and one of two situations holds:
 
 ;; Preserving the pair across a takeover
 
-;; When a popup takes the pair's column away, the pair's own layout would be
-;; lost: `quit-window' (q) only brings the conversation back to the column's
-;; window, and `delete-window' (C-x 0) removes that window altogether.  Two
-;; window states are therefore stashed when the takeover happens and put back
-;; when the popup is dismissed: the pair's own state on the column's window
-;; (used when that window survives, i.e. `q') and the whole frame's state on
-;; `alonso--pair-restore' (used when the window is gone, i.e. `C-x 0').  The
-;; states are only applied while the pair is not displayed, so they never
-;; fight with `alonso-open' or a fresh takeover.
+;; Two states are stashed, because the two ways out differ: `quit-window' only
+;; brings the conversation back into the column's window, while
+;; `delete-window' takes that window away.  The pair's own state covers the
+;; first case, the whole frame's state the second.
 
 (defvar alonso--pair-restore nil
   "Plist (:frame F :state S) stashed when a popup takes over the pair's column.
@@ -1325,7 +1289,7 @@ the input are then bound together as a single atomic window (see
     ;; `alonso--make-windows-atomic').
     (alonso--make-windows-atomic)))
 
-;;; Step 4 — User commands (basic interaction)
+;;; User commands (basic interaction)
 
 ;;;###autoload
 (defun alonso-prompt (text)
@@ -1439,7 +1403,7 @@ just to its left)."
   (when (and alonso-process (process-live-p alonso-process))
     (alonso--send "quit")))
 
-;;; Step 10 — Shutdown and robustness
+;;; Shutdown and robustness
 
 ;;;###autoload
 (defun alonso-kill ()
@@ -1470,7 +1434,7 @@ just to its left)."
 
 (add-hook 'kill-emacs-hook #'alonso-kill)
 
-;;; Step 11 — Prefix keymap and interactive commands
+;;; Prefix keymap and interactive commands
 
 ;;;###autoload
 (defun alonso-restart ()

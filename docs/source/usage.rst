@@ -66,21 +66,21 @@ The conversation buffer shows the user prompts prefixed with ``>>> `` and the
 model's response streaming into it.  Thinking (chain-of-thought) is rendered in
 PaleVioletRed4 (``#8b475d``, set in ``pdj-theme.el``) and separated from the
 answer by two blank lines.  When ``alonso-show-thinking`` is nil the thinking
-text is hidden instead and a transient placeholder is shown — the
+text is hidden instead and a transient placeholder is shown: the
 ``alonso-thinking-placeholder`` string (``thinking…`` by default) with the
-braille spinner running just to its left — which disappears as soon as the
+braille spinner running just to its left.  It disappears as soon as the
 answer (or a tool call) starts.  The model's answer is rendered as Markdown
 (faces, hidden markers, clickable links and fenced-code-block highlighting),
-without ever changing the buffer text — copying the conversation out is
+without changing the buffer text, so copying the conversation out is
 unaffected.
 
 In the input buffer:
 
-* ``C-c C-c`` — ``alonso-send-input`` sends the prompt (``RET`` inserts a
-  newline).
-* ``C-y`` — ``alonso-yank`` pastes an image from the clipboard when there is
-  one, otherwise yanks text as usual.
-* ``RET`` / ``C-j`` — insert a newline.
+* ``C-c C-c`` sends the prompt (``alonso-send-input``).  ``RET`` inserts a
+  newline.
+* ``C-y`` pastes an image from the clipboard when there is one
+  (``alonso-yank``), otherwise yanks text as usual.
+* ``RET`` and ``C-j`` insert a newline.
 
 Images are attached inline in the input buffer (the image shows in the buffer)
 and sent with the prompt as the bridge's ``images`` array.  There is no separate
@@ -108,13 +108,13 @@ What a trust scope covers depends on the tool:
 
 ``shell``
    *class* is the **program of a single-command line** (``git`` for
-   ``git status``), matched exactly — ``sed`` never covers ``sedx``.  A line
+   ``git status``), matched exactly: ``sed`` does not cover ``sedx``.  A line
    that runs more than one command (``cd /tmp && git status``) has no class:
    its first token would be ``cd``, and trusting that would cover every
    command that merely changes directory first.  The same goes for a line
    whose first token is inert (``cd``, ``export``, ``true``…), for an
    assignment prefix (``FOO=1 cmd``) and for a call the bridge classified as
-   ``medium``/``high`` risk — the class of ``git`` is offered on ``git
+   ``medium``/``high`` risk: the class of ``git`` is offered on ``git
    status``, not on ``git push --force``.  Such a call can still be trusted
    per call (``s``) or per tool (``a``).
 
@@ -125,7 +125,7 @@ What a trust scope covers depends on the tool:
 ``curl``
    *class* is the URL's **host**: scheme, any ``user:password@`` prefix and the
    port are dropped and the host is lowercased, so ``https://user@Example.COM:8443/a``
-   is trusted as ``example.com``.  The match is exact — trusting
+   is trusted as ``example.com``.  The match is exact: trusting
    ``example.com`` does not trust ``example.com.evil.tld``.  Only the ``url``
    is considered: a host reached through a redirect (``-L``), ``--resolve`` or
    an argument is not covered.
@@ -147,7 +147,7 @@ which alonso shows before the question:
 
 ``risk``
    ``high``, ``medium`` or ``low``.  It is appended to the question and, on
-   ``high``, the call has to be confirmed with a **typed** ``yes`` — a single
+   ``high``, the call has to be confirmed with a **typed** ``yes``: a single
    keystroke only approves ``low``/``medium`` calls.  A trust never covers
    this: a ``git`` class trust does not turn ``git push --force`` into a
    silent run.
@@ -157,8 +157,8 @@ which alonso shows before the question:
    (the shape of "read this page, then run what it says").  It is shown as a
    warning line and never blocks the call by itself.
 
-Mutating tool calls show their confirmation question right away, one at a time
-— the tool's icon and the ``Run tool: <name>?`` prompt, e.g.
+Mutating tool calls show their confirmation question right away, one at a time:
+the tool's icon and the ``Run tool: <name>?`` prompt, e.g.
 ``🖥 Run tool: shell?``, followed by the parameters beneath it.  Once the user
 answers, the ``[allowed]`` / ``[denied]`` tag is prepended to the front of that
 same line.  The trust-scope decision (per-call question and trust scope) uses
@@ -168,7 +168,7 @@ tool (``a``).  If a *class* trust cannot be recorded for the call, a message
 says so and the call is marked ``[allowed]`` (trusted once), never silently
 ``[trusted]``.
 
-The ``a`` scope trusts the tool whose question was on screen — never the other
+The ``a`` scope trusts the tool whose question was on screen, not the other
 tools of the session.  A trust silences the questions it covers, so it is never
 invisible: choosing a scope says what it now covers in the echo area, the
 conversation mode line names the active grants (``🔓shell``,
@@ -192,9 +192,9 @@ Typing ``/project <something>`` in the input buffer changes the working
 directory the bridge uses.  The meaning of ``<something>`` depends on the
 ``alonso-project-dir`` defcustom:
 
-* ``nil`` (default) — the argument is a **path** (expanded with
+* ``nil`` (default): the argument is a **path** (expanded with
   ``expand-file-name``).
-* non-``nil`` — the argument is a **project name** resolved as ``BASE/NAME``.
+* non-``nil``: the argument is a **project name** resolved as ``BASE/NAME``.
 
 As a side effect the project's ``.dir-locals.el`` is applied (respecting
 ``safe-local-variable-values``), ``set_cwd`` is sent to the bridge and
@@ -204,7 +204,7 @@ The mode line
 -------------
 
 The input buffer's mode line (which hides the usual modes and line/column info)
-shows the prompt's context — the model and the session token usage — right next
+shows the prompt's context (the model and the session token usage) right next
 to the prompt being typed::
 
    alonso-chat [<model>] [↑<in> ↓<out> ⚡<hit>/<miss>] <dial> <pct>% (<used>/<window>) [<overrides>]
@@ -215,5 +215,5 @@ the next prompt.
 
 The conversation buffer's mode line keeps only the session state that is not
 about the prompt: its name, the active trust grants (``🔓shell``) and, as the
-very last group, the status — the braille spinner while a turn is running
-(``alonso…`` for a turn without a spinner) and empty when idle.
+very last group, the status: the braille spinner while a turn is running
+(``alonso…`` for a turn without a spinner), empty when idle.

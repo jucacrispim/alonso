@@ -122,7 +122,7 @@
       (cl-incf n))
     n))
 
-;;; Tool confirmation UI — unicode icons and command/pattern/path in blue
+;;; Tool confirmation UI: unicode icons and command/pattern/path in blue
 
 (ert-deftest alonso-tools--icon-shell ()
   :tags '(tools)
@@ -166,7 +166,7 @@
   (should (equal "🔧 Run tool: foo? "
                  (alonso--confirm-question "foo" (make-hash-table)))))
 
-;;; Tool confirmation — the question line is shown from the start (before the
+;;; Tool confirmation: the question line is shown from the start (before the
 ;;; parameters/diff) and the `[allowed]' / `[denied]' tag is prepended to the
 ;;; front of that same line after the user answers
 
@@ -316,7 +316,7 @@
     (let ((pos (alonso--record-tool-confirmation "shell" shell-input nil)))
       (should (progn (alonso--keep-question-visible pos) t)))))
 
-;;; Batch confirmation — one denied tool refuses the rest without asking and
+;;; Batch confirmation: one denied tool refuses the rest without asking and
 ;;; cancels the turn (the conversation stops waiting for the user's input)
 
 (defun alonso-tools-tests--batch-queue-a ()
@@ -386,10 +386,10 @@
               (alonso-tools-tests--batch-queue-ab) '(run run))))
     (should (not (member "cancel" (cadr res))))))
 
-;;; One-at-a-time display — each mutating tool call is shown (via
+;;; One-at-a-time display: each mutating tool call is shown (via
 ;;; `--show-tool-call') interleaved with its own confirmation question, not all
 ;;; at once before any question.  So with N tools, the event sequence alternates
-;;; show/ask (show/ask ... show) — the questions never pile up on screen.
+;;; show/ask (show/ask ... show): the questions never pile up on screen.
 
 (defun alonso-tools-tests--seq-queue-ab ()
   (list (list :id "a" :name "write"
@@ -415,7 +415,7 @@
                  (alonso-tools-tests--run-seq
                   (alonso-tools-tests--batch-queue-a) '(deny)))))
 
-;;; Confirmation menu — the question is asked through the transient
+;;; Confirmation menu: the question is asked through the transient
 ;;; `alonso--confirm-menu' when transient is available, and through the
 ;;; `read-char-choice' prompt (`alonso--ask-user-trust') otherwise.
 ;;; `alonso--confirm-ask' is the seam that chooses (and that the batch
@@ -498,7 +498,7 @@
 
 ;; Regression: the Trust choice (`t' in the menu, `!' in the char-prompt
 ;; fallback) goes through `alonso--confirm-answer' with `trust', which
-;; calls `--trust-pause' — that is what saves the paused tool call in
+;; calls `--trust-pause', which saves the paused tool call in
 ;; `alonso--trust-context'.  The sub-menu then reads a fully populated
 ;; context (previously it was nil, so the tool was dispatched with nil
 ;; name/input/id and nothing ran).
@@ -692,7 +692,7 @@
       (alonso--confirm-ask "shell" (make-hash-table :test 'equal)))
     (should (equal '(deny) ans))))
 
-;;; Trust scope — class keys, prefix matching, recording and reset
+;;; Trust scope: class keys, prefix matching, recording and reset
 
 (ert-deftest alonso-tools--shell-class-key-first-command-token ()
   :tags '(tools)
@@ -723,7 +723,7 @@
 
 ;; A redirect is not a separator, so a single command that redirects still has
 ;; its program as the class key (the bridge used to report the `2>&1' as two
-;; more commands — see the llm-bridge `Segments' tests).
+;; more commands: see the llm-bridge `Segments' tests).
 (ert-deftest alonso-tools--shell-class-key-survives-a-redirect ()
   :tags '(tools)
   (dolist (cmd '("git describe --tags 2>&1"
@@ -924,7 +924,7 @@
                  (null alonso--trust-all)
                  (null alonso--trust-context)))))
 
-;;; `alonso--cancel-confirm' and `alonso--schedule-confirm' — timer handling
+;;; `alonso--cancel-confirm' and `alonso--schedule-confirm': timer handling
 
 ;; A pending confirmation timer is cancelled and every pending batch state is
 ;; cleared.
@@ -984,7 +984,7 @@
       (when (timerp alonso--confirm-timer)
         (cancel-timer alonso--confirm-timer)))))
 
-;;; `alonso--keep-question-visible' — scrolling a live conversation window
+;;; `alonso--keep-question-visible': scrolling a live conversation window
 
 ;; With the conversation buffer displayed in a window, the function selects
 ;; that window, moves to POS and recenters (leaving the original window
@@ -1002,7 +1002,7 @@
         (should (window-live-p win))
         (should (progn (alonso--keep-question-visible (point-min)) t))))))
 
-;;; `alonso--ask-user-trust' — the read-char-choice fallback
+;;; `alonso--ask-user-trust': the read-char-choice fallback
 
 ;; y/Y run once, n/N deny and anything else (`!') opens the trust sub-menu.
 
@@ -1017,7 +1017,7 @@
       (setq ch ?N) (should (eq 'deny (alonso--ask-user-trust "p")))
       (setq ch ?!) (should (eq 'trust (alonso--ask-user-trust "p"))))))
 
-;;; `alonso--trust-description' — the trust sub-menu labels
+;;; `alonso--trust-description': the trust sub-menu labels
 
 (ert-deftest alonso-tools--trust-description-all-with-name ()
   :tags '(tools)
@@ -1077,7 +1077,7 @@
   (let ((alonso--trust-context (list :name "shell")))
     (should (equal "" (alonso--trust-description 'weird)))))
 
-;;; `alonso--trust-finish' — the `[allowed]' fallback when no trust is recorded
+;;; `alonso--trust-finish': the `[allowed]' fallback when no trust is recorded
 
 ;; A `class' scope on a tool without a class key records no trust, so the tool
 ;; is marked `[allowed]' (not `[trusted]'), dispatched and the batch continues.
@@ -1166,7 +1166,7 @@
     (should (equal '("shell") alonso--trust-tools))
     (should (string-match-p "trusting every .shell. call" (car messages)))))
 
-;;; `alonso--confirm-next' — an already-trusted tool runs without asking
+;;; `alonso--confirm-next': an already-trusted tool runs without asking
 
 (ert-deftest alonso-tools--confirm-next-runs-trusted-tool-without-asking ()
   :tags '(tools)
@@ -1187,7 +1187,7 @@
        nil))
     (should (and (null asked) (equal "write" dispatched)))))
 
-;;; Confirmation metadata — segments, risk and taint
+;;; Confirmation metadata: segments, risk and taint
 ;;
 ;; Since the prompt-injection hardening the bridge attaches `segments', `risk'
 ;; and `tainted' to a `tool_confirm'.  They are advisory: they tell the human
@@ -1293,7 +1293,7 @@
                   (buffer-substring-no-properties start (point-max)))))
       (should (string-match-p (regexp-quote "🧠 Run tool: knowledge?") text)))))
 
-;;; `curl' — a network tool: URL (host highlighted) and request args
+;;; `curl', a network tool: URL (host highlighted) and request args
 
 (ert-deftest alonso-tools--icon-curl ()
   :tags '(tools)
@@ -1361,17 +1361,17 @@
   (should (equal "  url:\n    "
                  (alonso--format-tool-call "curl" (make-hash-table)))))
 
-;; `knowledge' has no trust class on purpose: a class trust on KB writes would
-;; let a note planted by an injected page skip the human, and the KB is read by
-;; every later session.  `curl' does have one — the URL's host — because that
-;; is the meaningful unit for a network fetch.
+;; `knowledge' has no trust class: a class trust on KB writes would let a note
+;; planted by an injected page skip the human, and the KB is read by every
+;; later session.  `curl' does have one (the URL's host), because the host is
+;; the meaningful unit for a network fetch.
 
 (ert-deftest alonso-tools--knowledge-has-no-class-key ()
   :tags '(tools)
   (should (null (alonso--trust-class-key
                  "knowledge" (alonso-tools-tests--input "command" "add")))))
 
-;;; `curl' trust class — the URL's host
+;;; `curl' trust class: the URL's host
 
 (ert-deftest alonso-tools--curl-class-key-is-the-host ()
   :tags '(tools)
@@ -1403,7 +1403,7 @@
                   "curl" (alonso-tools-tests--input "url" "http://[::1]:8080/x")))))
 
 ;; A malformed bracketed authority (no closing bracket) is kept verbatim
-;; instead of being mangled — it can only ever trust itself.
+;; instead of being mangled: it can only ever trust itself.
 (ert-deftest alonso-tools--curl-class-key-tolerates-a-broken-ipv6-literal ()
   :tags '(tools)
   (should (equal "["
@@ -1420,7 +1420,7 @@
   (should (null (alonso--trust-class-key "curl" (alonso-tools-tests--input
                                                  "url" 42)))))
 
-;; The host match is exact — a trusted host must not cover a lookalike domain
+;; The host match is exact: a trusted host must not cover a lookalike domain
 ;; that merely starts with it (the classic `example.com.evil.tld' trap).
 (ert-deftest alonso-tools--curl-host-class-matches-exactly-not-by-prefix ()
   :tags '(tools)
@@ -1474,7 +1474,7 @@
     (should (null (alonso--trust-class-available-p))))
   (should (null (alonso--trust-class-available-p))))
 
-;;; Risk — the menu question carries it and `high' forces a typed answer
+;;; Risk: the menu question carries it and `high' forces a typed answer
 
 (ert-deftest alonso-tools--confirm-question-medium-risk-tag ()
   :tags '(tools)

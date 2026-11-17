@@ -318,7 +318,7 @@
   (should (not (alonso--tool-read-only-p
                 "curl" (alonso-client-tests--hash "url" "https://example.com")))))
 
-;;; Startup flags — model, thinking, reasoning_effort and logfile (--start-args)
+;;; Startup flags: model, thinking, reasoning_effort and logfile (--start-args)
 
 (ert-deftest alonso-client--start-args-empty-by-default ()
   :tags '(client)
@@ -437,7 +437,7 @@
         (alonso-aggressive-prune nil))
     (should (not (member "-aggressive-prune" (alonso--start-args))))))
 
-;;; Per-request overrides — model, thinking and reasoning_effort
+;;; Per-request overrides: model, thinking and reasoning_effort
 
 (defun alonso-tests--with-req (model thinking effort fn)
   "Run FN with the per-request overrides set to MODEL/THINKING/EFFORT
@@ -591,7 +591,7 @@
                                   (alonso--mode-line-request))))
       (with-current-buffer buf (setq alonso-request-thinking 'unset)))))
 
-;;; Transport layer — `alonso--send', the sentinel and event dispatch
+;;; Transport layer: `alonso--send', the sentinel and event dispatch
 
 (defun alonso-client-tests--hash (&rest kv)
   "Build a hash table from KV (alternating key/value pairs)."
@@ -735,7 +735,7 @@ returned and ARGS the arguments it received."
       (alonso--handle-line (alonso-client-tests--event-json "event" "weird")))
     (should warned)))
 
-;;; Tool-calling loop — `alonso--on-tool-call' and `alonso--on-tool-confirm'
+;;; Tool-calling loop: `alonso--on-tool-call' and `alonso--on-tool-confirm'
 
 ;; A read-only tool (executed by the bridge) is only displayed: no pending
 ;; entry, no dispatch.
@@ -808,7 +808,7 @@ returned and ARGS the arguments it received."
                                                           "input" (make-hash-table))))
     (should (equal '("write" "c1") dispatched))))
 
-;;; Confirmation metadata — segments, risk and taint from the bridge
+;;; Confirmation metadata: segments, risk and taint from the bridge
 
 (ert-deftest alonso-client--hval-true-reads-json-booleans ()
   :tags '(client)
@@ -953,7 +953,7 @@ returned and ARGS the arguments it received."
         (alonso-aggressive-prune nil))
     (should (equal '("-provider" "google") (alonso--start-args)))))
 
-;;; `alonso--sandbox-args' and `alonso--start-command' — the sandbox flags
+;;; `alonso--sandbox-args' and `alonso--start-command': the sandbox flags
 
 (ert-deftest alonso-client--sandbox-args-disable-flag-when-off ()
   :tags '(client)
@@ -1070,7 +1070,7 @@ returned and ARGS the arguments it received."
                          (plist-get captured :command))))
       (setenv "LLM_BRIDGE_ONNXRUNTIME_LIB" old))))
 
-;;; `alonso--start-process' — reuse, spawn and the runtime-lib env override
+;;; `alonso--start-process': reuse, spawn and the runtime-lib env override
 
 (ert-deftest alonso-client--start-process-returns-a-live-process ()
   :tags '(client)
@@ -1118,7 +1118,7 @@ returned and ARGS the arguments it received."
                        (equal "/old/lib.so" (getenv "LLM_BRIDGE_ONNXRUNTIME_LIB")))))
       (setenv "LLM_BRIDGE_ONNXRUNTIME_LIB" old))))
 
-;;; `alonso--ensure-ready' — ready, handshake and timeout
+;;; `alonso--ensure-ready': ready, handshake and timeout
 
 (ert-deftest alonso-client--ensure-ready-returns-when-already-ready ()
   :tags '(client)
@@ -1180,7 +1180,7 @@ returned and ARGS the arguments it received."
     (should (and (equal "tool_confirm" (car sent))
                  (member "c1" (cdr sent))))))
 
-;;; `alonso--trust-record' — recording replaces a previous entry
+;;; `alonso--trust-record': recording replaces a previous entry
 
 (ert-deftest alonso-client--trust-record-specific-replaces-a-previous-entry ()
   :tags '(client)
@@ -1196,7 +1196,7 @@ returned and ARGS the arguments it received."
     (alonso--trust-record 'class "write" in)
     (should (= 1 (length alonso--trust-class)))))
 
-;;; `alonso--input-key' — the canonical form behind the `specific' scope
+;;; `alonso--input-key': the canonical form behind the `specific' scope
 
 ;; Two payloads with the same content parse into distinct hash tables, and
 ;; `equal' on hash tables is true only for the same object: the canonical
@@ -1242,7 +1242,7 @@ returned and ARGS the arguments it received."
   (should (and (equal "ls" (alonso--input-key "ls"))
                (equal 3 (alonso--input-key 3)))))
 
-;;; `alonso-trust-reset' — the way out of a trust picked by accident
+;;; `alonso-trust-reset': the way out of a trust picked by accident
 
 (ert-deftest alonso-client--trust-reset-clears-every-scope ()
   :tags '(client)

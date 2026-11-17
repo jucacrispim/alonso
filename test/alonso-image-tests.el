@@ -34,7 +34,7 @@
 (require 'ert)
 (require 'alonso-tests-lib)
 
-;;; Images — the `images' array in the prompt and inline attachment
+;;; Images: the `images' array in the prompt and inline attachment
 ;;;
 ;;; An image is attached by inserting it inline in the input buffer (a space
 ;;; carrying the image in its `display' property and the spec in the
@@ -462,7 +462,7 @@
           (erase-buffer)
           (alonso-input-mode 1)
           ;; Force electric indentation ON in this very buffer, so it is the
-          ;; carrier itself — not the buffer-local switch — under test.
+          ;; carrier itself (not the buffer-local switch) under test.
           (setq-local electric-indent-mode t)
           (cl-letf (((symbol-function 'alonso--image-create)
                      (lambda (_spec) 'dummy)))

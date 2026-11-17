@@ -19,17 +19,14 @@
 
 ;;; Commentary:
 
-;; Render the model's answer as Markdown in the conversation buffer: the faces,
-;; the marker hiding (through the `display' property), the clickable links and
-;; the syntax highlighting of fenced code blocks.  Rendering only adds text
-;; properties -- the buffer text is never changed, so copying the conversation
-;; out is unaffected.
+;; Render the model's answer as Markdown in the conversation buffer: the
+;; faces, the marker hiding (through the `display' property), the clickable
+;; links and the syntax highlighting of fenced code blocks.  Rendering only
+;; adds text properties, so copying the conversation out is unaffected.
 ;;
-;; This file is self-contained: it never touches the buffer/mode plumbing, it
-;; only operates on positions in the current buffer.  The conversation buffer
-;; drives it through `alonso--render-markdown-region'.
-;;
-;; See alonso-ui.el.
+;; Self-contained: it operates on positions in the current buffer, through
+;; `alonso--render-markdown-region'.  Design notes are in
+;; docs/source/hacking/architecture.rst.
 
 ;;; Code:
 
@@ -114,17 +111,12 @@ dimmed so it does not compete with the link text."
 
 ;;; Markdown rendering of the model's answer
 ;;
-;; The answer streams in as `chunk' events.  Rendering every fragment as it
-;; arrives would break mid-construct (e.g. between the two `*' of a
-;; `**bold**'), so the fragments of an answer segment are accumulated and
-;; rendered in one shot when the segment ends: right before the model starts
-;; a `thinking' block, before a tool call is shown, and at the end of the
-;; turn (`turn_end', `error', `cancelled').  Only the model's *answer* is
-;; rendered -- the chain-of-thought and the tool lines are left as they are.
-;;
-;; Rendering only adds text properties (faces, hidden markers through the
-;; `display' property and a clickable keymap on links): the buffer text is
-;; never changed, so copying the conversation out is unaffected.
+;; The fragments of an answer segment are accumulated and rendered in one shot
+;; when the segment ends: right before the model starts a `thinking' block,
+;; before a tool call is shown, and at the end of the turn (`turn_end',
+;; `error', `cancelled').  Rendering each fragment as it arrives would break
+;; mid-construct, e.g. between the two `*' of a `**bold**'.  Only the model's
+;; *answer* is rendered, not the chain-of-thought or the tool lines.
 
 (defcustom alonso-render-markdown t
   "Whether to render the model's answer as Markdown in the conversation.
@@ -155,9 +147,9 @@ the base face (monospaced, no colors).  Has no effect when
   :group 'alonso)
 
 ;; The defcustom below is initialized by calling `alonso--set-md-code-font',
-;; which is why it has to come after these helpers.  Declare the variable here
-;; (with no value, so the defcustom remains the single source of truth) to keep
-;; the helpers from triggering a free-variable warning.
+;; so it has to come after these helpers.  Declare the variable here (with no
+;; value, so the defcustom remains the single source of truth) to keep the
+;; helpers from triggering a free-variable warning.
 (defvar alonso-md-code-font)
 
 (defun alonso--apply-md-code-font ()
@@ -191,7 +183,7 @@ When non-nil the answer segment accumulated so far is re-rendered after
 every streaming `chunk', so the formatting appears while the model is
 still writing.  A Markdown construct is only rendered once both of its
 markers have arrived (e.g. `**bold**' stays raw until the closing `**'
-shows up), because the renderer only matches complete constructs -- so the
+shows up), because the renderer only matches complete constructs, so the
 answer is never shown with a half-written marker hidden.  Rendering
 re-scans the whole segment on every chunk, so a very long answer costs
 more (quadratic in the segment length); set this to nil to render each
@@ -209,8 +201,8 @@ segment once, when it ends.  Has no effect when
           (and (group "*" (minimal-match (one-or-more (not (any "*\n")))) "*"))))
   "Regexp matching the inline Markdown constructs the renderer supports.
 The groups, in order: 1 inline code, 2 link text, 3 link URL, 4 bold,
-5 strikethrough, 6 italic.  A single `_' is deliberately not matched so
-snake_case identifiers in plain text are left alone.")
+5 strikethrough, 6 italic.  A single `_' is not matched, so snake_case
+identifiers in plain text are left alone.")
 
 (defvar alonso-link-keymap
   (let ((map (make-sparse-keymap)))
@@ -257,7 +249,7 @@ What happens depends on `alonso-hide-markdown-markers'."
 (defun alonso--md-show-url (start end url)
   "Show URL after the link text, replacing the `](url)' tail between START and END.
 The tail is replaced (through the `display' property) by \\\" (url)\\\", so the
-buffer reads `text (url)' — the URL stays visible, in
+buffer reads `text (url)': the URL stays visible, in
 `alonso-md-url-face'.  With `alonso-hide-markdown-markers'
 nil the raw `](url)' tail is kept instead, dimmed in `shadow'."
   (if alonso-hide-markdown-markers
@@ -399,7 +391,7 @@ LANG (see `alonso--md-lang-mode') is turned on and font-locked, and
 the resulting faces are copied back, composed with the base
 `alonso-md-code-face' (the syntax face first, so it wins the foreground;
 the base face last, so the block keeps the code font).  Only `face' text
-properties are added -- the buffer text is never changed.  Does
+properties are added: the buffer text is untouched.  Does
 nothing when `alonso-fontify-code-blocks' is nil, LANG is unknown or
 its mode is unavailable."
   (when (and alonso-fontify-code-blocks lang (> end start))
@@ -434,15 +426,12 @@ its mode is unavailable."
 
 ;;; Incremental fontification of the streaming code blocks
 ;;
-;; While the answer streams (live rendering) the whole segment is re-rendered
-;; on every `chunk'.  Re-fontifying each code block from scratch every time is
-;; quadratic -- and the worst offender is C: cc-mode's font-lock is very slow
-;; on unbalanced braces, exactly the state of a C function while it is still
-;; being written.  To keep the syntax highlighting live without the stalls,
-;; the *open* block is fontified incrementally into a persistent work buffer
-;; (only the text that just arrived is fontified, plus a little context), and
-;; a block that is already fontified is skipped through the
-;; `alonso-md-code-fontified' marker on its opening fence.
+;; Re-fontifying each code block on every chunk is quadratic, and cc-mode's
+;; font-lock on unbalanced braces (a C function still being written) is slow.
+;; So the *open* block is fontified incrementally into `alonso--md-live-cache':
+;; only the text that just arrived, plus a little context.  A block already
+;; fontified is skipped through the `alonso-md-code-fontified' marker on its
+;; opening fence.
 
 (defconst alonso--md-live-context 200
   "Characters of context re-fontified before the newly arrived code.
@@ -552,8 +541,8 @@ fontified (during live streaming) it is left untouched."
 FENCE is the position of the block's opening fence line.  The block was
 fontified incrementally as it streamed (see
 `alonso--md-code-block-fontify-live'); here we only flush the content that
-arrived since the last live render -- usually nothing, since the closing
-fence is all that was just added -- and record the `alonso-md-code-fontified'
+arrived since the last live render (usually nothing, since the closing
+fence is all that was just added) and record the `alonso-md-code-fontified'
 marker, instead of re-fontifying the whole block from scratch."
   (alonso--md-code-block-fontify-live start end lang)
   (put-text-property fence (1+ fence) 'alonso-md-code-fontified t)

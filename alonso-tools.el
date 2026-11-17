@@ -21,14 +21,12 @@
 
 ;; Show tool calls in the conversation buffer and ask the user to confirm the
 ;; mutating ones, one at a time, recording the `[allowed]' / `[denied]' /
-;; `[trusted]' tag.  This includes the trust-scope decision UX: the transient
-;; menus for the per-call question and the trust scope, with a
-;; `read-char-choice' fallback when transient is unavailable.
+;; `[trusted]' tag.  Includes the trust-scope decision UX: the transient menus
+;; for the per-call question and the trust scope, and a `read-char-choice'
+;; fallback when transient is missing.
 ;;
-;; Builds on alonso-ui.el (insertion helpers, conversation state, faces) and
-;; alonso-client.el (tool metadata, the trust/dispatch helpers).
-;;
-;; See alonso-ui.el.
+;; Builds on alonso-ui.el and alonso-client.el.  Design notes are in
+;; docs/source/hacking/architecture.rst.
 
 ;;; Code:
 
@@ -72,8 +70,8 @@ file tools the path.  Used in the confirmation question prompt."
 
 (defun alonso--risk-tag (risk)
   "Return the confirmation tag for RISK, or an empty string for `low'.
-Upper case on purpose: the tag has to be seen while the question is read,
-not skimmed over as one more word in a sentence."
+Upper case: the tag is read while the question is read, not skimmed over as
+one more word in a sentence."
   (pcase risk
     ("high" " [HIGH RISK]")
     ("medium" " [MEDIUM RISK]")
@@ -233,15 +231,14 @@ the taint warning are shown between the header and the parameters.
 
 Read-only tools (which run without confirmation) get a title line with the
 tool's icon and name, e.g. \"📄 read\".  Mutating tools (which ask for an
-individual confirmation) show the confirmation question line right away —
+individual confirmation) show the confirmation question line right away:
 the tool's icon, the `Run tool: <name>' prompt and, when the risk is not
-`low', its tag (`[HIGH RISK]') so the danger is on the line that later
-carries the `[allowed]' outcome — followed by
-the parameters beneath it.  The `[allowed]' / `[denied]' prefix is later
-prepended to the front of that same question line by
-`alonso--record-tool-confirmation' once the user answers, so the
-question is visible from the start (not only after the answer).  Returns the
-buffer position of the visible title/parameters."
+`low', its tag (`[HIGH RISK]'), so the danger sits on the line that later
+carries the `[allowed]' outcome.  The parameters follow beneath it.  The
+`[allowed]' / `[denied]' prefix is later prepended to the front of that same
+question line by `alonso--record-tool-confirmation' once the user answers,
+so the question is visible from the start (not only after the answer).
+Returns the buffer position of the visible title/parameters."
   (alonso--render-answer)
   (alonso--thinking-placeholder-end)
   (let* ((read-only (alonso--tool-read-only-p name input))
@@ -265,7 +262,7 @@ buffer position of the visible title/parameters."
     (setq alonso--tool-confirm-pos (point-max))
     (1+ pos)))
 
-;;; Step 9 — Batch confirmation, trust scope and UX
+;;; Batch confirmation, trust scope and UX
 
 (defun alonso--tool-meta (tc)
   "Return the confirmation metadata plist of the queued tool call TC.
@@ -297,7 +294,7 @@ TC carries the fields the bridge sent with the `tool_confirm' event
 POS is normally the start of the tool-confirmation line just inserted, or
 the start of the tool-call parameters while the confirmation question is
 being asked (see `alonso--confirm-pending').  After scrolling, that
-line sits near the top — not centered — so the question and the beginning of
+line sits near the top, not centered, so the question and the beginning of
 a large diff remain on screen together even when the diff is much taller
 than the window."
   (let ((win (get-buffer-window alonso-buffer-name t)))
@@ -308,7 +305,7 @@ than the window."
               (select-window win)
               (goto-char (max (point-min) (min pos (point-max))))
               ;; a few lines of context above the line, the rest of the
-              ;; (possibly large) diff fills the window below — never
+              ;; (possibly large) diff fills the window below, never
               ;; centered mid-diff
               (recenter 3))
           (select-window sel))))))
@@ -373,7 +370,7 @@ bridge reported in `alonso--trust-context' and opens the trust menu."
   "Record the trust chosen in SCOPE for the paused tool call and resume.
 Reads the paused context, records the trust, marks the current tool as
 `[trusted]' (or `[allowed]' when the scope could not record a trust, e.g. a
-`class' on a tool without a class key — in which case a message says the
+`class' on a tool without a class key, in which case a message says the
 trust did not stick), dispatches it guarded, and continues
 confirming the rest of the batch.  A `high' risk call is asked again with
 the typed prompt even when it is now trusted: a trust silences the
@@ -442,10 +439,9 @@ tool call from `alonso--trust-context' so the menu shows exactly
 what is being approved: the concrete command/pattern/URL/path for
 `specific', the class key for `class' (the `shell' program of a
 single-command line, the file's directory or the `curl' URL's host) and the
-tool name for `all' — so,
-for example, a `sed' class is shown as \"This class of calls: sed\" and a
-host class as \"This host, any URL: example.com\" instead of an ambiguous
-label."
+tool name for `all', so for example a `sed' class is shown as \"This class
+of calls: sed\" and a host class as \"This host, any URL: example.com\"
+instead of an ambiguous label."
   (let ((name (plist-get alonso--trust-context :name))
         (input (plist-get alonso--trust-context :input)))
     (pcase kind
@@ -503,8 +499,8 @@ Runs on `transient-exit-hook'.  The batch confirmation is asked through a
 transient menu whose suffixes record the answer (via
 `alonso--menu-answered') and consume the pending context; when the
 user closes the menu WITHOUT picking an option (e.g. `C-g'), no suffix runs
-and, without this, neither a `tool_result' nor a `cancel' would ever be sent
-— the turn would hang waiting forever.  Detect that by the still-pending
+and, without this, neither a `tool_result' nor a `cancel' would ever be sent,
+and the turn would hang waiting forever.  Detect that by the still-pending
 context plus the unanswered flag and treat it as a deny: the current tool is
 recorded `[denied]' and the batch is aborted with a `cancel'.  The answer is
 applied from a 0s timer so the transient has fully exited before the batch
@@ -517,13 +513,13 @@ transient from inside the exit hook)."
      (alonso--trust-context
       (run-with-timer 0 nil #'alonso--trust-cancel)))))
 
-;;; Confirmation and trust menus (transient).  Transient is loaded first
-;;; (top-level) so the guard below always sees `transient-define-prefix'
-;;; defined — otherwise the chicken-and-egg (checking fboundp BEFORE requiring)
-;;; would skip the menu definitions at startup and `--confirm-menu' /
-;;; `--trust-menu' would end up void.  The guard remains for batch test
-;;; environments (-Q) without transient; there `--ask-user-trust'
-;;; (`read-char-choice') is the fallback question.
+;;; Confirmation and trust menus (transient)
+
+;; Transient is loaded at top level, before the guard: a guard that checks
+;; `fboundp' before requiring skips the menu definitions at startup and leaves
+;; `--confirm-menu' / `--trust-menu' void.  The guard stays for batch (-Q)
+;; without transient, where `--ask-user-trust' (`read-char-choice') is the
+;; fallback question.
 
 (require 'transient nil t)
 (when (fboundp 'transient-define-prefix)
@@ -592,8 +588,8 @@ empty context and dispatch a nil tool call, leaving the turn hanging."
       ("r" "Run once" alonso--confirm-run)
       ("d" "Deny" alonso--confirm-deny)
       ("t" "Trust…" alonso--confirm-trust)]])
-  ;; A confirmation (or trust) menu closed without an answer — `C-g', or any
-  ;; other exit that runs no suffix — must not leave the turn hanging: the
+  ;; A confirmation (or trust) menu closed without an answer (`C-g', or any
+  ;; other exit that runs no suffix) must not leave the turn hanging: the
   ;; exit hook treats it as a deny and aborts the batch.
   (add-hook 'transient-exit-hook #'alonso--menu-exit-hook))
 
@@ -656,18 +652,18 @@ not: only the typed `yes' approves it."
            (input (plist-get tc :input))
            (high (equal (plist-get tc :risk) "high")))
       ;; Show this tool call now (one at a time), so only the tool being
-      ;; confirmed appears on screen — not every tool of the batch.
+      ;; confirmed appears on screen, not every tool of the batch.
       (alonso--show-tool-call id name input (alonso--tool-meta tc))
       (cond
        ;; A previous tool was denied: refuse this one too, no question.  No
-       ;; tool_result is sent — the batch is aborted with a `cancel' at the end.
+       ;; tool_result is sent: the batch is aborted with a `cancel' at the end.
        (denied
         (alonso--record-tool-confirmation name input nil)
         (alonso--confirm-next rest t))
        ;; Already trusted: run directly, no question.  `high' risk is the
-       ;; exception: a trust silences the questions that come after it, and
-       ;; the typed `yes' is the whole point of the tag — a `git' class trust
-       ;; must not turn `git push --force' into a silent run.
+       ;; exception: a trust silences the questions that come after it, but a
+       ;; `git' class trust must not turn `git push --force' into a silent
+       ;; run, so the call still asks for a typed `yes'.
        ((and (alonso--trusted-p name input) (not high))
         (alonso--record-tool-confirmation name input t "trusted")
         (alonso--dispatch-tool-guarded name input id)
@@ -747,7 +743,7 @@ path in `alonso--confirm-ask'."
     (setq alonso--confirm-context nil)
     (pcase answer
       ('deny
-       ;; Record the `[denied]' tag, but do NOT send a tool_result — the turn
+       ;; Record the `[denied]' tag, but do NOT send a tool_result: the turn
        ;; is aborted with a `cancel' (once, at the end of the batch), so a
        ;; redundant tool_result would only race the cancel and make the bridge
        ;; error with \"tool_result without pending tool call\".

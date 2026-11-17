@@ -128,7 +128,7 @@
 (defun alonso-tests--pair-layout ()
   "Display the conversation and input buffers as the alonso pair.
 Builds a left window plus the conversation (top) and input (bottom) on the
-right — the `alonso-open' layout — and makes the pair atomic."
+right (the `alonso-open' layout) and makes the pair atomic."
   (let ((left (get-buffer-create "*alonso-tests-left*")))
     (delete-other-windows)
     (switch-to-buffer left)
@@ -173,7 +173,7 @@ right — the `alonso-open' layout — and makes the pair atomic."
   :tags '(ui)
   (should (memq 'alonso-kill kill-emacs-hook)))
 
-;;; Token formatting — compact counts
+;;; Token formatting: compact counts
 
 (ert-deftest alonso-ui--format-tokens-0 ()
   :tags '(ui)
@@ -207,7 +207,7 @@ right — the `alonso-open' layout — and makes the pair atomic."
   :tags '(ui)
   (should (equal "1.23M" (alonso--format-tokens 1232432))))
 
-;;; Session — token accumulation, per-turn summary and input mode-line
+;;; Session: token accumulation, per-turn summary and input mode-line
 
 (ert-deftest alonso-ui--session-accumulates-sent-received-tokens ()
   :tags '(ui)
@@ -266,7 +266,7 @@ right — the `alonso-open' layout — and makes the pair atomic."
                      (not (string-match-p "⚡" (alonso--mode-line-session))))))
     (alonso--reset-session)))
 
-;;; Context usage — dial glyph, percentage and window
+;;; Context usage: dial glyph, percentage and window
 
 (ert-deftest alonso-ui--context-dial-char-fills-with-pct ()
   :tags '(ui)
@@ -366,7 +366,7 @@ right — the `alonso-open' layout — and makes the pair atomic."
                (null alonso-session-context-tokens)
                (null alonso-session-context-window))))
 
-;;; Usage delta — incremental updates during turn and final turn_end
+;;; Usage delta: incremental updates during turn and final turn_end
 
 (ert-deftest alonso-ui--usage-delta-accumulates-incrementally ()
   :tags '(ui)
@@ -406,7 +406,7 @@ right — the `alonso-open' layout — and makes the pair atomic."
                      (= 12 alonso-session-output-tokens))))
     (alonso--reset-session)))
 
-;;; Regression: first open — the input buffer does not exist yet when the
+;;; Regression: first open, the input buffer does not exist yet when the
 ;;; mode-line setup runs; even so, the model, session and request indicators
 ;;; must be installed and the default constructs (modes + position) stripped.
 
@@ -523,7 +523,7 @@ right — the `alonso-open' layout — and makes the pair atomic."
     (should (equal (car (last mode-line-misc-info))
                    '(:eval (alonso--mode-line-status))))))
 
-;;; Thinking — two-blank-lines separator before the response
+;;; Thinking: two-blank-lines separator before the response
 
 (ert-deftest alonso-ui--thinking-marks-pending-separator ()
   :tags '(ui)
@@ -741,7 +741,7 @@ Return (RETURN-VALUE METHOD CWD)."
             (should (equal (file-truename tmp) (file-truename captured)))))
       (ignore-errors (delete-directory tmp t)))))
 
-;;; Hooks — a prompt starting with "#" runs a local script (no LLM)
+;;; Hooks: a prompt starting with "#" runs a local script (no LLM)
 
 (defun alonso-ui-tests--feed-hook-action ()
   "Feed a `hook_action' event through the process filter."
@@ -1228,7 +1228,7 @@ Call FN with (WIN BUF QPOS) where QPOS is the tool line, far from the end."
      (alonso--on-thinking "pensando de novo\n")
      (should (= (window-point win) (with-current-buffer buf (point-max)))))))
 
-;;; Atomic window — the conversation and the input behave as a single window
+;;; Atomic window: the conversation and the input behave as a single window
 
 (ert-deftest alonso-ui--window-atom-is-a-persistent-parameter ()
   :tags '(ui)
@@ -1834,7 +1834,7 @@ Call FN with LEFT; clean up afterwards."
                      (get-buffer-window alonso-input-buffer-name t))))
     (alonso-tests--reset-windows)))
 
-;;; User commands — prompt, cancel, cwd
+;;; User commands: prompt, cancel, cwd
 
 (ert-deftest alonso-ui--prompt-command-forwards-to-prompt-send ()
   :tags '(ui)

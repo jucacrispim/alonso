@@ -19,24 +19,14 @@
 
 ;;; Commentary:
 
-;; The "client" half of the Emacs llm-bridge integration.  It owns the JSON
-;; protocol (serializing the commands sent to the bridge and parsing the
-;; events it emits), the subprocess lifecycle (spawning, line filtering,
-;; handshake), the handling of tool calls (display, approval and the
-;; trust-scope decision logic) and the per-request overrides.
+;; The "client" half of the integration: the JSON protocol (the commands sent
+;; to the bridge and the events it emits), the subprocess lifecycle (spawning,
+;; line filtering, handshake) and the per-request overrides.  The bridge
+;; executes the tools, so nothing is run here: the client approves the
+;; mutating ones and displays them all.
 ;;
-;; The tools themselves are executed by the bridge, not here: read-only tools
-;; run inline in the bridge, and mutating tools run once the client approves
-;; them (a `tool_confirm' command).  The client never runs a tool.
-;;
-;; It deliberately knows nothing about buffers/windows: every event it
-;; dispatches is handed to a rendering handler living in
-;; alonso-ui.el, reached via `declare-function' (those handlers are
-;; only called at runtime, never at load time).  The UI side requires this
-;; file, so there is a single one-way dependency (ui -> client).
-;;
-;; See alonso.el (the entry point) and alonso-ui.el for the
-;; rest of the integration.
+;; It knows nothing about buffers/windows: the handlers it dispatches to live
+;; in alonso-ui.el.  Design notes are in docs/source/hacking/architecture.rst.
 
 ;;; Code:
 
@@ -56,8 +46,8 @@
 (declare-function alonso--show-tool-call "alonso-tools")
 (declare-function alonso--schedule-confirm "alonso-tools")
 ;; The trust class key of `curl' is the URL's host, and the URL is split by
-;; the same function the display uses, so what is shown and what is trusted
-;; can never disagree.
+;; the same function the display uses, so the host shown and the host trusted
+;; come from one parse.
 (declare-function alonso--curl-url-parts "alonso-tools")
 (declare-function alonso--stop-spinner "alonso-ui")
 
@@ -288,7 +278,7 @@ is not known by the bridge.")
 (defvar alonso--turn-finalized nil
   "Non-nil when the current turn has received its `turn_end' event.")
 
-;;; Trust scope — tools the user decided to run without asking again
+;;; Trust scope: tools the user decided to run without asking again
 
 (defvar alonso--trust-specific nil
   "Alist of (tool-name . input-key) trusted for this specific call only.
@@ -345,11 +335,12 @@ Called when the bridge is restarted or shut down, ending the session."
 
 ;;; Per-request overrides (model, thinking and thinking depth)
 
-;; The Go bridge accepts, in the `prompt' command, the optional fields:
-;;   model            — string, explicit model (overrides provider/derivation)
-;;   thinking         — bool, turns thinking on (deepseek-reasoner) or off
-;;                      (deepseek-chat)
-;;   reasoning_effort — string ("low"/"medium"/"high"), thinking depth
+;; The Go bridge accepts, in the `prompt' command, the optional fields
+;; `model' (string, an explicit model that overrides the provider default),
+;; `thinking' (bool, turns thinking on for `deepseek-reasoner' or off for
+;; `deepseek-chat') and `reasoning_effort' (string: "low", "medium" or
+;; "high", the thinking depth).
+;;
 ;; All three are buffer-local to the input buffer: the user sets them before
 ;; the prompt and the value is sent in the following request (they persist
 ;; until changed, mirroring the bridge, which keeps overrides between prompts).
@@ -631,7 +622,7 @@ here, so a launch failure can be reported instead of a bare timeout.")
   "Handle a `tool_call' event EV: a read-only tool the bridge already ran.
 
 Read-only tools (read/grep/glob/knowledge) are executed by the bridge itself
-in the same turn, so a `tool_call' needs no action from the client — it is
+in the same turn, so a `tool_call' needs no action from the client: it is
 only displayed.  Mutating tools (shell/write/search_replace/curl, and a
 `knowledge' write) arrive as `tool_confirm' events instead (see
 `alonso--on-tool-confirm')."
@@ -640,7 +631,7 @@ only displayed.  Mutating tools (shell/write/search_replace/curl, and a
         (input (gethash "input" ev)))
     (alonso--show-tool-call id name input (alonso--confirm-meta ev))
     ;; Mark the pending separator so the model's next output (thinking or
-    ;; response) is separated from the tool display by two blank lines —
+    ;; response) is separated from the tool display by two blank lines, the
     ;; same as the mutating path does in `alonso--send-tool-confirm'.  The
     ;; flag is cleared on the first resumed output and at `turn_end'.
     (setq alonso--after-tool-separator-pending t)))
@@ -675,10 +666,9 @@ answers (removed when approved, or via `cancel' when denied)."
 (defun alonso--send-tool-confirm (id)
   "Ask the bridge to execute the approved tool call ID.
 
-The bridge is the sole executor — the client never runs tools anymore; this
-only sends the approval.  The tool is removed from `alonso-pending-tools' and
-the separator flag is set so the next model output is separated from the tool
-by two blank lines."
+This only sends the approval: the bridge executes the tool.  The tool is
+removed from `alonso-pending-tools' and the separator flag is set so the next
+model output is separated from the tool by two blank lines."
   (when (and alonso-process (process-live-p alonso-process))
     (alonso--send "tool_confirm" (list "id" id)))
   (setq alonso-pending-tools
@@ -719,13 +709,7 @@ repeat content fetched earlier in the session.  All of them are optional
         :risk (alonso--hval ev "risk")
         :tainted (alonso--hval-true ev "tainted")))
 
-;;; Tool execution lives in the bridge (llm-bridge), not in the client.
-;;
-;; The tools (read/write/shell/grep/glob/search_replace) are now implemented in
-;; Go inside llm-bridge and executed there: read-only tools run inline, and
-;; mutating ones run once the client approves them (via `tool_confirm').  The
-;; client only displays tool calls and answers the bridge's confirmations, so
-;; the local tool implementations that used to live here were removed.
+;;; Spawning the bridge
 
 (defun alonso--resolve-command (cmd)
   "Resolve the bridge command CMD for `make-process'.
@@ -878,7 +862,7 @@ reported as a bare timeout."
     (when parts
       (mapconcat #'identity (nreverse parts) "; "))))
 
-;;; Tool decision logic — read-only classification and trust scope
+;;; Read-only classification and trust scope
 
 (defun alonso--tool-read-only-p (name &optional input)
   "Return non-nil if tool NAME with INPUT is read-only (needs no confirmation).
@@ -906,16 +890,15 @@ tool), so there is no local execution error to report."
 The scheme, a `user:password@' prefix, the port and the path/query are
 dropped, and the result is downcased, so
 \"https://user:pw@Example.COM:8443/a?b=c\" yields \"example.com\"; a URL
-without a scheme (\"example.com/a\") yields \"example.com\" as well.  The
-port is dropped on purpose: the host is what identifies where the data goes,
-and a public port is noise.  Returns nil when URL is missing, is not a
-string, or yields no host at all, so a call nobody can pin to a single host
-is never covered by a host trust."
+without a scheme (\"example.com/a\") yields \"example.com\" as well.  The host
+alone identifies where the data goes, so the port is dropped.  Returns nil
+when URL is missing, is not a string, or yields no host at all: a call
+nobody can pin to a single host gets no host trust."
   (when (and (stringp url) (not (string-empty-p (string-trim url))))
     (let ((authority (nth 1 (alonso--curl-url-parts (string-trim url)))))
       ;; A schemeless URL arrives whole in AUTHORITY: keep the authority only.
       (setq authority (car (split-string (or authority "") "[/?#]")))
-      ;; Drop `user:password@' — the host is what follows the last `@'.
+      ;; Drop `user:password@': the host follows the last `@'.
       (when (string-match "@\\(.*\\)\\'" authority)
         (setq authority (match-string 1 authority)))
       ;; Drop the port, honoring the bracketed IPv6 form (`[::1]:8080').
@@ -940,7 +923,7 @@ token is one of these gets no class key, so the menu offers no `c' for it.")
   "Return non-nil when CMD is a single shell command.
 A separator (`;', `&&', `||', `|', `|&', a lone `&' or a newline) makes the
 line run more than one command, and the first token is then a poor name for
-it — `cd /tmp && rm -rf x' would be trusted as `cd', which covers every
+it: `cd /tmp && rm -rf x' would be trusted as `cd', which covers every
 command that starts with a `cd'.  The `&' of a redirect (`2>&1', `>&2',
 `<&3', `&>', `&>>') is not a separator, and neither is a separator inside
 quotes or behind a backslash."
@@ -993,12 +976,12 @@ line that is not `low' risk gets no class: `git commit' is medium and
 `git push --force' is high, and the class of `git' should be offered on a
 harmless `git status', not on the command that raised the tag.  On the
 comparison path (`alonso--trusted-p') RISK is nil and only the shape of the
-command decides, which is what keeps recording and matching consistent —
-a stricter recording can only make a trust rarer, never mismatched.
+command decides.  Recording and matching go through this same function, so
+they stay consistent: a stricter recording only makes a trust rarer.
 
-`knowledge' deliberately has no class: trusting a whole class of KB writes
-would let a note planted by an injected page skip the human (and the KB is
-read by every later session).  For `curl' the unit is the host, not the
+`knowledge' has no class: a class trust on KB writes would let a note
+planted by an injected page skip the human, and the KB is read by every
+later session.  For `curl' the unit is the host, not the
 tool: trusting `example.com' must not trust `elsevil.example.com'."
   (cond
    ((equal name "shell")
@@ -1014,7 +997,7 @@ tool: trusting `example.com' must not trust `elsevil.example.com'."
 
 (defun alonso--class-prefix-p (name key candidate)
   "Return non-nil if the stored class KEY covers CANDIDATE for tool NAME.
-For `shell' (a command token) and `curl' (a host) the two must be `equal' —
+For `shell' (a command token) and `curl' (a host) the two must be `equal':
 exactly that token, exactly that host: `sed' does not cover `sedx' and
 `example.com' does not cover `example.com.evil.tld'.  For the path tools
 \(`write', `search_replace') CANDIDATE is covered when KEY is a directory
@@ -1027,8 +1010,8 @@ prefix of it, so sub-directories are trusted too."
 (defun alonso--input-key (input)
   "Return a canonical form of tool INPUT for the `specific' trust scope.
 Every `tool_confirm' arrives as a freshly parsed hash table, and `equal' on
-hash tables is true only for the very same object — so recording the payload
-itself would never match the next confirmation, and \"this exact call\"
+hash tables is true only for the very same object.  Recording the payload
+itself would then never match the next confirmation, and \"this exact call\"
 would silently ask again.  This rebuilds the payload as a key-sorted alist
 \(recursing into nested tables and conses) so that two distinct objects
 with the same content compare `equal'."
@@ -1095,7 +1078,7 @@ NAME (not every tool), so it needs a name."
   "Forget every tool trust granted in this session.
 A trust silences the confirmation for the tools it covers (see
 `alonso--trusted-p'), and one picked by accident would keep doing so for
-the rest of the session — hence this way out, also reachable from the
+the rest of the session, hence this way out, also reachable from the
 mode-line (which names the active grants).  Returns the number of grants
 forgotten."
   (interactive)

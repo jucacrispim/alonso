@@ -27,8 +27,6 @@
 ;;
 ;; Builds on alonso-ui.el (input buffer, faces) and alonso-client.el
 ;; (per-request buffers, the `images' JSON).
-;;
-;; See alonso-ui.el.
 
 ;;; Code:
 
@@ -37,14 +35,7 @@
 (require 'alonso-client)
 (require 'alonso-ui)
 
-;;; Images — pasting/attaching images to a prompt (multimodal)
-
-;; An image is attached by inserting it *inline* in the input buffer: the
-;; buffer shows the image itself and, right beneath the text, carries the spec
-;; (a plist) in the `alonso-image' text property.  At send time
-;; `alonso--buffer-collect' strips those placeholders out of the text and
-;; hands the specs to `alonso--prompt-send', so the pasted image is a
-;; WYSIWYG attachment — no separate "pending images" list to manage.
+;;; Inline attachment
 
 (defcustom alonso-image-max-width 400
   "Maximum width, in pixels, an inline image is displayed at.
@@ -58,7 +49,7 @@ what gets sent to the model.  nil displays images at their full size."
     "image/bmp" "image/tiff" "image/svg+xml")
   "Clipboard image MIME types, most preferred first.
 When the clipboard offers several renderable image types, `alonso-yank'
-inserts the first one present in this list — no prompt.  Types not listed
+inserts the first one present in this list, with no prompt.  Types not listed
 rank after every listed type."
   :type '(repeat string)
   :group 'alonso)
@@ -96,22 +87,18 @@ and is never displayed.  The image is scaled to `alonso-image-max-width'."
 The string is a single zero-width space (U+200B) holding the image in its
 `display' property and SPEC itself in the `alonso-image' property (so it can
 be collected at send time).  When the image cannot be displayed (a URL, or a
-format this Emacs cannot render) a textual placeholder — still carrying the
-`alonso-image' property — is returned instead.  The placeholder is
+format this Emacs cannot render) a textual placeholder, still carrying the
+`alonso-image' property, is returned instead.  The placeholder is
 `rear-nonsticky' so text typed right after it does not inherit the
 attachment properties."
-  ;; Two properties matter here:
+  ;; `rear-nonsticky': the text typed right after the placeholder is inserted
+  ;; with `insert-and-inherit', which copies the `alonso-image' property onto
+  ;; it; it would then read as another image and be dropped from the prompt.
   ;;
-  ;; `rear-nonsticky' — text typed right after the placeholder is inserted
-  ;; with `insert-and-inherit', which would otherwise copy the `alonso-image'
-  ;; (and `display') properties onto it, making typed text look like another
-  ;; image and get dropped from the prompt at send time.
-  ;;
-  ;; zero-width space instead of a plain space — a trailing-whitespace cleanup
-  ;; (`delete-horizontal-space', run e.g. by `electric-indent-mode' when RET
-  ;; opens a new line) would delete a space-carried placeholder and silently
-  ;; drop the attachment; U+200B is not horizontal whitespace, so it survives.
-  ;; It is always replaced by the image via `display', so it is never visible.
+  ;; The zero-width space is not a plain space: `delete-horizontal-space'
+  ;; (`electric-indent-mode' runs it on RET) deletes a space-carried
+  ;; placeholder and the attachment goes with it.  U+200B survives, and
+  ;; `display' replaces it with the image, so it is never visible.
   (let ((img (alonso--image-create spec)))
     (if img
         (propertize "\u200b" 'display img 'alonso-image spec 'rear-nonsticky t)
@@ -203,7 +190,7 @@ otherwise this falls back to the normal text `yank'."
 Each segment is a cons (KIND . VALUE): KIND is either `text' (VALUE the text
 run, with the image placeholders removed) or `image' (VALUE an image spec
 plist).  Segments appear in buffer order, so an image pasted above a caption
-comes before it and one pasted below comes after — this is what the echo in
+comes before it and one pasted below comes after.  This is what the echo in
 `alonso--prompt-send' uses to reproduce the order the user typed."
   (let ((pt (point-min))
         (segments '()))

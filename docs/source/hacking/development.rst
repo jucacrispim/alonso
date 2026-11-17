@@ -2,7 +2,7 @@ Development
 ===========
 
 The project uses **Eldev** to manage dependencies and to run the tests,
-coverage and linters.  Install the ``eldev`` script once — the official
+coverage and linters.  Install the ``eldev`` script once: the official
 installer drops it in ``~/.local/bin/eldev``::
 
    curl -fsSL https://raw.githubusercontent.com/emacs-eldev/eldev/master/webinstall/eldev | sh
@@ -12,10 +12,10 @@ Dependencies
 
 * **Runtime** dependencies live in the ``Package-Requires:`` header of
   ``alonso.el`` (``emacs``, ``transient``).  That header is what **Eldev**
-  reads (and what **MELPA** reads when it builds the package) — there is no
+  reads (and what **MELPA** reads when it builds the package), there is no
   other source.
-* **Test/coverage** dependencies — ``undercover`` (with its own ``dash`` and
-  ``shut-up``) — are **not** runtime dependencies, so they do **not** go into
+* **Test/coverage** dependencies (``undercover``, with its own ``dash`` and
+  ``shut-up``) are **not** runtime dependencies, so they do **not** go into
   ``Package-Requires:``.  They are declared in the ``Eldev`` file::
 
       (eldev-add-extra-dependencies 'test 'undercover)
@@ -50,12 +50,12 @@ Linting
 
 ``eldev lint`` runs the same checks MELPA runs when building the package:
 
-* ``doc`` — checkdoc (docstring style).
-* ``package`` — package-lint (package metadata / conventions).
-* ``re`` — relint (regexp linting).
+* ``doc``: checkdoc (docstring style).
+* ``package``: package-lint (package metadata / conventions).
+* ``re``: relint (regexp linting).
 
 The ``re`` linter ships only in **GNU ELPA**, so the ``Eldev`` file enables
-that archive (``(eldev-use-package-archive 'gnu)``) alongside MELPA — without
+that archive (``(eldev-use-package-archive 'gnu)``) alongside MELPA.  Without
 it, the ``re`` linter is silently skipped.  ``make lint`` is the same command.
 
 Coverage
