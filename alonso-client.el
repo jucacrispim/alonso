@@ -407,13 +407,12 @@ Returns \"\" when no override is set."
 SPEC is a plist matching one `images' entry the bridge accepts in a `prompt':
 either `:data' (inline base64, with an optional `:mime' media type), `:url'
 \(a link passed through to the provider) or `:path' (a local file read by
-the bridge).  An optional `:detail' (DeepSeek) is also honored."
+the bridge).  Those four are the whole entry the bridge takes."
   (let ((tbl (make-hash-table :test 'equal))
         (data (plist-get spec :data))
         (url (plist-get spec :url))
         (path (plist-get spec :path))
-        (mime (plist-get spec :mime))
-        (detail (plist-get spec :detail)))
+        (mime (plist-get spec :mime)))
     (cond
      (data
       (puthash "data" data tbl)
@@ -422,8 +421,6 @@ the bridge).  An optional `:detail' (DeepSeek) is also honored."
       (puthash "url" url tbl))
      (path
       (puthash "path" path tbl)))
-    (when detail
-      (puthash "detail" detail tbl))
     tbl))
 
 (defun alonso--images-json (specs)

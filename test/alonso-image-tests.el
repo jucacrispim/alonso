@@ -526,11 +526,19 @@
   (let ((s (alonso--image-string (list :mime "image/xyz"))))
     (should (string-match-p "image/xyz" s))))
 
-(ert-deftest alonso-image--image-json-includes-the-detail-hint ()
+(ert-deftest alonso-image--image-json-takes-the-four-protocol-fields ()
   :tags '(image)
-  (let ((h (alonso--image-json (list :data "AAAA" :mime "image/png"
-                                     :detail "high"))))
-    (should (equal "high" (gethash "detail" h)))))
+  (let ((h (alonso--image-json (list :data "AAAA" :mime "image/png"))))
+    (should (equal "AAAA" (gethash "data" h)))
+    (should (equal "image/png" (gethash "mime_type" h)))))
+
+;; The bridge drops unknown fields in silence, so a hint it does not take
+;; would go unnoticed.  This keeps it out.
+
+(ert-deftest alonso-image--image-json-ignores-a-field-the-bridge-drops ()
+  :tags '(image)
+  (let ((h (alonso--image-json (list :data "AAAA" :detail "high"))))
+    (should (null (gethash "detail" h)))))
 
 ;; With several renderable image types on the clipboard, the comparator runs
 ;; and the highest-priority one (png over jpeg) wins.
