@@ -57,25 +57,12 @@ The client only says where the projects live:
 ```
 
 `alonso-sandbox` (default `t`) turns the sandbox on or off: `nil` passes
-`-disable-sandbox` and the tools run unconfined.  `caged` must be installed
-and found on `exec-path`, or its path passed with `alonso-sandbox-args`, e.g.
-`("-caged-bin" "/opt/caged/bin/caged")`.
+`-disable-sandbox` and the tools run unconfined.
 
-`alonso-sandbox-rw-paths` (default `("~/mysrc")`) is passed as one
-`-sandbox-rw` per directory and `alonso-sandbox-ro-paths` (default `nil`) as
-`-sandbox-ro`.  The bridge already grants the system trees (`/usr`, `/lib`,
-`/lib64`, `/bin`, `/etc`), `/dev/urandom`, the knowledge-base assets
-(`~/.cache/llm-bridge`, read-only) and `~/.llm-bridge` (read-write, created at
-startup), so the lists here only add what is project-specific (and extras such
-as `~/.gitconfig`).  Anything outside them is denied to the tools by the kernel
-(`EACCES`), which shows up as the tool failing, not as a sandbox error.
-
-`alonso-sandbox-args` (default `nil`) is passed verbatim to the bridge after
-the paths, for sandbox flags without a dedicated setting.  The environment is
-not filtered by the client: the bridge keeps its own environment (the API key,
-the provider URL, the KB settings) and then runs the tools without it.
-
-See the llm-bridge documentation (section "Sandbox") for the flags.
+The [installation chapter](https://docs.poraodojuca.dev/alonso/installation.html#sandbox)
+covers the rest: `alonso-sandbox-ro-paths`, `alonso-sandbox-args`, the paths
+the bridge already grants, and the flags it passes on to
+[`caged`](https://docs.poraodojuca.dev/caged).
 
 ## Documentation
 

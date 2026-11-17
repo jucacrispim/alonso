@@ -2092,8 +2092,8 @@ Call FN with LEFT; clean up afterwards."
       (alonso-kill))
     (should (and (equal "quit" sent) deleted))))
 
-;; (The kill-deletes-tool-procs test was removed: the client no longer spawns
-;; tool subprocesses; the bridge runs the tools.)
+;; (The kill-deletes-tool-procs test went with the tool processes, see
+;; alonso-client-tests.el.)
 
 
 ;;; `alonso-restart'

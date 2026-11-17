@@ -338,8 +338,8 @@ Called when the bridge is restarted or shut down, ending the session."
 ;; The Go bridge accepts, in the `prompt' command, the optional fields
 ;; `model' (string, an explicit model that overrides the provider default),
 ;; `thinking' (bool, turns thinking on for `deepseek-reasoner' or off for
-;; `deepseek-chat') and `reasoning_effort' (string: "low", "medium" or
-;; "high", the thinking depth).
+;; `deepseek-chat') and `reasoning_effort' (string, the thinking depth: the
+;; levels the provider announced, see `alonso-provider-levels').
 ;;
 ;; All three are buffer-local to the input buffer: the user sets them before
 ;; the prompt and the value is sent in the following request (they persist

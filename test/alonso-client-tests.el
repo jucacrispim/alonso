@@ -257,10 +257,8 @@
 
 ;;; Tools
 ;;
-;; The tool implementations (read/write/shell/grep/glob/search_replace) moved
-;; into the bridge (llm-bridge), which now executes them.  This client only
-;; displays tool calls and answers the bridge's confirmations, so the tests for
-;; the local tool implementations were removed along with them.
+;; The bridge executes every tool, so the client has no tool implementations
+;; to test: only the display and the confirmation answers are here.
 
 ;;; Read-only tools
 
@@ -920,16 +918,6 @@ returned and ARGS the arguments it received."
       (alonso--dispatch-tool "shell" (make-hash-table) "c1"))
     (should (and (equal "tool_confirm" (car sent))
                  (member "c1" (cdr sent))))))
-
-;; Tool subprocess handling was removed: the bridge runs the tools, so the
-;; client no longer spawns shell/grep processes or tracks their output.
-;;
-
-;;; (Local tool execution tests removed)
-;;
-;; read/write/glob/search_replace are implemented and executed by the bridge
-;; now; the client no longer has `alonso--tool-read'/`--tool-write'/`--tool-glob'/
-;; `--tool-search-replace'/`--execute-tool', so their tests were removed.
 
 ;;; `alonso--resolve-command' and the provider startup flag
 

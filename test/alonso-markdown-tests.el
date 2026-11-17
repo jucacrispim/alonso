@@ -454,7 +454,7 @@ incremental fontification produced it.  Returns the per-char faces."
 (ert-deftest alonso-markdown--live-open-block-fontified-incrementally ()
   :tags '(markdown)
   ;; With a block larger than the context window, each chunk must fontify only
-  ;; the new text (plus the bounded context), never the whole growing block --
+  ;; the new text (plus the bounded context), never the whole growing block:
   ;; otherwise the total cost would be quadratic in the block size.
   (with-temp-buffer
     (insert "```c\n")

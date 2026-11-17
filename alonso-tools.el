@@ -746,7 +746,7 @@ path in `alonso--confirm-ask'."
        ;; Record the `[denied]' tag, but do NOT send a tool_result: the turn
        ;; is aborted with a `cancel' (once, at the end of the batch), so a
        ;; redundant tool_result would only race the cancel and make the bridge
-       ;; error with \"tool_result without pending tool call\".
+       ;; error with "tool_result without pending tool call".
        (alonso--record-tool-confirmation name input nil)
        (alonso--confirm-next rest t))
       ('trust

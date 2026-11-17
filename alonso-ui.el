@@ -477,7 +477,7 @@ two decimals and no trailing zeros, e.g. 999, 1000 -> \"1k\", 1500 ->
 \"1.5k\", 2439 -> \"2.44k\", 1232432 -> \"1.23M\"."
   (cond
    ((< n 1000) (number-to-string n))
-   ;; 999995 avoids the ugly \"1000k\": from there up we round into \"1M\".
+   ;; 999995 avoids the ugly "1000k": from there up we round into "1M".
    ((< n 999995) (concat (alonso--format-tokens--scaled n 1000.0) "k"))
    (t (concat (alonso--format-tokens--scaled n 1000000.0) "M"))))
 
@@ -982,12 +982,11 @@ buffer's mode-line (see `alonso--get-buffer')."
                          '(:eval (alonso--mode-line-session))
                          '(:eval (alonso--mode-line-request)))))
     (with-current-buffer buf
-      ;; Killing this buffer must also close the conversation window, so the
-      ;; pair never leaves a lone window behind (see
-      ;; `alonso--on-pair-buffer-killed').
+      ;; Closes the conversation window on kill, same as the other half.
       (add-hook 'kill-buffer-hook #'alonso--on-pair-buffer-killed nil t)
-      ;; Drop the modes construct (\"(Fundamental LBIn)\") and the position
-      ;; (line/column/%/\"All\") and the position.  The input bar shows only its name.
+      ;; Drop the modes construct and the position, so the bar shows only the
+      ;; buffer name plus the fragments below (see `alonso--get-buffer' for
+      ;; why the position goes too).
       (setq-local mode-line-modes "")
       (setq-local mode-line-position nil)
       (setq-local mode-line-misc-info
