@@ -7,8 +7,8 @@ The format is based on `Keep a Changelog
 <https://keepachangelog.com/en/1.1.0/>`_, and this project adheres to
 `Semantic Versioning <https://semver.org/spec/v2.0.0.html>`_.
 
-Unreleased
-----------
+0.6.0 (2026-11-17)
+------------------
 
 Added
 ~~~~~
@@ -49,6 +49,11 @@ Changed
   does not re-execute itself under a ceiling.  The examples of flags that no
   longer exist (``-sandbox-network``, ``-sandbox-connect-port``) are gone, and
   ``~/.llm-bridge`` is documented as read-write and created at startup.
+- The thinking options no longer name DeepSeek models. ``-thinking`` turns
+  thinking on or off, and the provider decides what it means: DeepSeek
+  switches to a reasoning model, Anthropic and Google open a budget.
+- The image spec no longer sends the ``detail`` hint. The bridge drops the
+  fields it does not take in silence, so the hint never reached the provider.
 
 0.5.0 (2026-10-26)
 ------------------
