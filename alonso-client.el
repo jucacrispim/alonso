@@ -72,59 +72,43 @@
   :group 'alonso)
 
 (defcustom alonso-sandbox t
-  "Whether the bridge should confine itself (passed as `-disable-sandbox').
-The bridge sandboxes itself by default: at startup it re-executes itself
-under `caged' (the ceiling) and runs the external processes it spawns (the
-`shell' and `grep' tools and the hooks) under a stricter policy with no
-environment, no IPC and no network.  With this on, the directories in
-`alonso-sandbox-ro-paths' and `alonso-sandbox-rw-paths' are passed to it
-with `-sandbox-ro'/`-sandbox-rw'.
+  "Whether the bridge should confine the processes it runs.
+The bridge runs unconfined; every tool it spawns is a `caged' child with its
+own policy: no environment, no IPC, a private `/tmp' and `/dev/shm', and a
+network namespace where only loopback is up.
 
-When nil, `-disable-sandbox' is passed and the bridge runs unconfined.
+The directories in `alonso-sandbox-rw-paths' and `alonso-sandbox-ro-paths'
+are passed along with `-sandbox-rw'/`-sandbox-ro'.  When nil,
+`-disable-sandbox' is passed and the tools run unconfined.
 
-The client no longer wraps the bridge itself: the sandbox is the bridge's
-job (see the llm-bridge documentation, section \"Sandbox\").  `caged' must
-be installed and found on the variable `exec-path', or its path passed with
-`alonso-sandbox-args' \(\"-caged-bin\" \"/path/to/caged\")."
+`caged' has to be found on the variable `exec-path', or its path given in
+`alonso-sandbox-args'.  The Sandbox section of the manual has the details."
   :type 'boolean
   :group 'alonso)
 
 (defcustom alonso-sandbox-ro-paths nil
   "Extra read-only directories given to the bridge (one `-sandbox-ro' each).
-A leading ~ is expanded.
-
-The bridge already grants the system trees (`/usr', `/lib', `/lib64',
-`/bin', `/etc'), `/dev/urandom', the knowledge-base assets
-\(`~/.cache/llm-bridge') and the global context/hooks (`~/.llm-bridge'),
-so this is only for extras such as `~/.gitconfig'.
-
-Every path has to exist when the bridge starts (its sandbox opens each one
-before restricting itself)."
+A leading ~ is expanded.  The bridge already grants the system trees, the
+knowledge-base assets and `~/.llm-bridge', so this is only for extras such as
+`~/.gitconfig'.  Every path has to exist when the bridge starts."
   :type '(repeat directory)
   :group 'alonso)
 
 (defcustom alonso-sandbox-rw-paths '("~/mysrc")
   "Directories the bridge and its tools may read and write (one `-sandbox-rw').
-A leading ~ is expanded.
-
-The bridge grants no project directory on its own — the sandbox is frozen
-when it starts and the project changes at runtime — so the projects root
-belongs here.  Anything outside these paths is denied to the tools by the
-kernel (`EACCES'), which shows up as the tool failing, not as a sandbox
-error.
-
-Every path has to exist when the bridge starts."
+A leading ~ is expanded.  The bridge grants no project directory on its own:
+its sandbox is frozen at startup while the project changes at runtime, so the
+projects root belongs here.  Anything outside these paths fails with
+`EACCES', which shows up as the tool failing, not as a sandbox error."
   :type '(repeat directory)
   :group 'alonso)
 
 (defcustom alonso-sandbox-args nil
   "Extra flags passed verbatim to the bridge, after the sandbox paths.
 For the bridge's sandbox flags that have no dedicated defcustom, e.g.
-\(\"-caged-bin\" \"/opt/caged/bin/caged\"), \"-sandbox-network\" or
-\(\"-sandbox-connect-port\" \"443\").
-
-The tools have no network by default \(the bridge itself always may reach
-its provider), so these are rarely needed."
+\(\"-caged-bin\" \"/opt/caged/bin/caged\").  The tools keep their own policy
+otherwise: loopback-only network, private `/tmp' and `/dev/shm', no
+environment and no IPC."
   :type '(repeat string)
   :group 'alonso)
 
@@ -754,12 +738,12 @@ A bare command name is left untouched so it is found via PATH."
 
 (defun alonso--call-with-caged-env (fn)
   "Call FN with CAGED_DISABLE_WARNINGS set, restoring the old value after.
-The bridge forwards the environment it inherits to the `caged' instance it
-re-executes itself under, so setting the variable here silences caged's
-\"Landlock ABI N does not support some features\" warning.  That warning goes
-to stderr and `alonso-client' treats any stderr line as a launch failure, so
-it would surface as a bogus error.  Nothing reads the variable when the
-sandbox is off, so it is always set."
+The bridge sets the variable for every caged child it spawns, so this is belt
+and braces: it keeps the \"Landlock ABI N does not support some features\"
+warning off stderr even with a bridge older than that.  A stderr line counts
+as a launch failure for `alonso-client', so the warning would surface as a
+bogus error.  Nothing reads the variable when the sandbox is off, so it is
+always set."
   (let ((old (getenv "CAGED_DISABLE_WARNINGS")))
     (unwind-protect
         (progn
@@ -775,8 +759,8 @@ With `alonso-sandbox' nil it is just (\"-disable-sandbox\").  Otherwise one
 `alonso-sandbox-args' verbatim.
 
 The paths simply add to what the bridge grants on its own: it already gives
-itself the system trees, `/dev/urandom', the KB assets and the global
-context, so the list here is about the projects and about extras."
+the tools the system trees, `/dev/urandom', the KB assets and `~/.llm-bridge',
+so the list here is about the projects and about extras."
   (if (not alonso-sandbox)
       (list "-disable-sandbox")
     (let (args)
@@ -792,7 +776,7 @@ context, so the list here is about the projects and about extras."
   "Build the full argv used to start the bridge.
 It is `alonso-command', followed by the startup args (`alonso--start-args')
 and the sandbox flags (`alonso--sandbox-args').  There is no launcher
-wrapper and no `--': the bridge applies the sandbox to itself."
+wrapper and no `--': the bridge sandboxes every tool it spawns."
   (append (list (alonso--resolve-command alonso-command))
           (alonso--start-args)
           (alonso--sandbox-args)))
@@ -827,15 +811,15 @@ with `LLM_BRIDGE_ONNXRUNTIME_LIB' set to it (via `setenv' before spawning, so
 a `make build-kb' bridge can dlopen the runtime lib and use the project
 knowledge base), then the previous value is restored.  Note: we cannot use the
 `make-process' `:environment' keyword because in some Emacs builds it is
-silently ignored — `setenv' against `process-environment' is what the child
-actually inherits.
+silently ignored: the child inherits `process-environment' as `setenv' left
+it.
 
 `alonso-sandbox' is applied by the bridge itself; the client only passes
 the `-sandbox-ro'/`-sandbox-rw' paths (and `-disable-sandbox' when it is
 off).  The one environment detail that still comes from here is
 CAGED_DISABLE_WARNINGS, set by `alonso--call-with-caged-env' around the
-spawn: the bridge forwards it to the caged instance it re-executes itself
-under, which keeps caged's ABI warning off stderr."
+spawn: the bridge forwards it to the caged instance it runs each tool under,
+which keeps caged's ABI warning off stderr."
   (if (and alonso-process (process-live-p alonso-process))
       alonso-process
     (let* ((old-lib (getenv "LLM_BRIDGE_ONNXRUNTIME_LIB"))

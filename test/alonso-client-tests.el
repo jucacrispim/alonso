@@ -986,10 +986,10 @@ returned and ARGS the arguments it received."
         (alonso-sandbox-ro-paths nil)
         (alonso-sandbox-rw-paths '("~/mysrc/"))
         (alonso-sandbox-args '("-caged-bin" "/opt/caged/bin/caged"
-                               "-sandbox-connect-port" "443")))
+                               "-curl-port" "443")))
     (should (equal (list "-sandbox-rw" (expand-file-name "~/mysrc/")
                          "-caged-bin" "/opt/caged/bin/caged"
-                         "-sandbox-connect-port" "443")
+                         "-curl-port" "443")
                    (alonso--sandbox-args)))))
 
 (ert-deftest alonso-client--start-command-without-sandbox-passes-the-disable-flag ()
@@ -1019,10 +1019,10 @@ returned and ARGS the arguments it received."
 
 (ert-deftest alonso-client--start-process-sets-caged-disable-warnings ()
   :tags '(client)
-  ;; The bridge forwards the environment it inherits to the caged instance it
-  ;; re-executes itself under, so CAGED_DISABLE_WARNINGS silences caged's ABI
-  ;; warning (which would arrive on stderr and look like a launch failure).  It
-  ;; is set only around the spawn.
+  ;; The bridge sets CAGED_DISABLE_WARNINGS for every caged child it spawns, so
+  ;; the client setting it too is belt and braces: it silences caged's ABI
+  ;; warning (which would arrive on stderr and look like a launch failure) even
+  ;; with an older bridge.  It is set only around the spawn.
   (let ((old (getenv "CAGED_DISABLE_WARNINGS"))
         (alonso-process nil) (alonso-line-buffer "")
         (alonso-onnxruntime-lib "")

@@ -31,6 +31,11 @@ Changed
   context dial) now sit in the ``alonso-chat`` bar, next to what is being typed,
   instead of above it in the conversation's.  The conversation bar keeps the
   trust grants and the status/spinner, which stays its last fragment.
+- The ``alonso-sandbox`` docstrings and the installation notes describe the
+  current bridge again: it runs each tool under its own ``caged`` policy and
+  does not re-execute itself under a ceiling.  The examples of flags that no
+  longer exist (``-sandbox-network``, ``-sandbox-connect-port``) are gone, and
+  ``~/.llm-bridge`` is documented as read-write and created at startup.
 
 0.5.0 (2026-10-26)
 ------------------

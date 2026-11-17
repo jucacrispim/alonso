@@ -26,15 +26,14 @@ pieces (``alonso-markdown.el``, ``alonso-image.el``, ``alonso-tools.el``).
 Sandbox
 -------
 
-The bridge sandboxes **itself**; the client does not wrap it.  By default the
-bridge re-executes itself under ``caged`` (a small Landlock + seccomp sandbox,
-see the `caged documentation <https://docs.poraodojuca.dev/caged>`_) at
-startup, and runs the external processes it spawns (the ``shell``/``grep``
-tools and the hooks) under a stricter policy with no environment, no IPC and no
-network.
+The client does not wrap the bridge.  The bridge runs the tools itself, and
+every tool it spawns is a ``caged`` child (a small Landlock + seccomp sandbox,
+see the `caged documentation <https://docs.poraodojuca.dev/caged>`_) with its
+own policy: no environment, no IPC, a private ``/tmp`` and ``/dev/shm``, and a
+network namespace where only loopback is up.
 
 ``alonso-sandbox`` (default ``t``) controls it: ``nil`` passes
-``-disable-sandbox`` and the bridge runs unconfined.  Either way ``caged`` has
+``-disable-sandbox`` and the tools run unconfined.  Either way ``caged`` has
 to be installed and found on ``exec-path``, or its path passed through
 ``alonso-sandbox-args``.
 
@@ -50,8 +49,8 @@ Two lists tell the bridge where the files are:
   directory: extra read-only paths such as ``~/.gitconfig``.  The bridge
   already grants the system trees (``/usr``, ``/lib``, ``/lib64``, ``/bin``,
   ``/etc``), ``/dev/urandom``, the knowledge-base assets
-  (``~/.cache/llm-bridge``) and the global context and hooks
-  (``~/.llm-bridge``).
+  (``~/.cache/llm-bridge``, read-only) and ``~/.llm-bridge`` (read-write, and
+  created at startup).
 
 ``alonso-sandbox-args`` (default ``nil``) is passed verbatim to the bridge
 after the paths, for sandbox flags that have no dedicated setting, e.g.
