@@ -115,13 +115,14 @@ E.g. \"deepseek\", \"google\" or \"anthropic\".  Empty = default."
 
 (defcustom alonso-thinking 'unset
   "Thinking mode global/startup (passed as -thinking flag).
-Value `unset' omits the flag (uses the bridge default); t forces thinking
-on (-thinking, deepseek-reasoner when there is no explicit model) and
-`off' forces it off (-thinking=false, deepseek-chat).  To override per
-request, use `alonso-request-thinking'."
+Value `unset' omits the flag (uses the bridge default).  Value t turns
+thinking on (-thinking) and `off' turns it off (-thinking=false).  The
+provider decides what that means: deepseek switches to a reasoning model,
+anthropic and google open a thinking budget.  To override per request, use
+`alonso-request-thinking'."
   :type '(choice (const :tag "Unset (bridge default)" unset)
-                 (const :tag "On (deepseek-reasoner)" t)
-                 (const :tag "Off (deepseek-chat)" off))
+                 (const :tag "On" t)
+                 (const :tag "Off" off))
   :group 'alonso)
 
 (defcustom alonso-reasoning-effort ""
@@ -337,8 +338,8 @@ Called when the bridge is restarted or shut down, ending the session."
 
 ;; The Go bridge accepts, in the `prompt' command, the optional fields
 ;; `model' (string, an explicit model that overrides the provider default),
-;; `thinking' (bool, turns thinking on for `deepseek-reasoner' or off for
-;; `deepseek-chat') and `reasoning_effort' (string, the thinking depth: the
+;; `thinking' (bool, turns thinking on or off; the provider decides what it
+;; does) and `reasoning_effort' (string, the thinking depth: the
 ;; levels the provider announced, see `alonso-provider-levels').
 ;;
 ;; All three are buffer-local to the input buffer: the user sets them before
@@ -363,8 +364,8 @@ Empty string = omits the `model' field (uses the provider default)."
   "Thinking override for the next prompt (buffer-local to the input buffer).
 Value t = on, `off' = off, `unset' = omit (provider default)."
   :type '(choice (const :tag "Unset (provider default)" unset)
-                 (const :tag "On (deepseek-reasoner)" t)
-                 (const :tag "Off (deepseek-chat)" off))
+                 (const :tag "On" t)
+                 (const :tag "Off" off))
   :group 'alonso)
 (make-variable-buffer-local 'alonso-request-thinking)
 

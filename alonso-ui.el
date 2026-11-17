@@ -1350,8 +1350,9 @@ as typed."
 ;;;###autoload
 (defun alonso-set-thinking (thinking)
   "Set the thinking override for the next prompt.
-THINKING is `on' (forces thinking, deepseek-reasoner), `off' (forces it
-off, deepseek-chat) or `unset' (restores the provider's configured mode)."
+THINKING is `on' (turns thinking on), `off' (turns it off) or `unset'
+\(omits the field, so the bridge keeps its own mode).  The provider decides
+what thinking on does."
   (interactive
    (list (intern (completing-read
                   "Thinking for the next prompt (unset/on/off): "
