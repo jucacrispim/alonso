@@ -652,7 +652,8 @@ script's combined output is inserted as plain text."
       (unless alonso-mode
         (alonso-mode 1))
       ;; Killing this buffer must also close the input window, so the pair
-      ;; never leaves a lone window behind (see `alonso--on-pair-buffer-killed').
+      ;; never leaves a lone window behind.  See
+      ;; `alonso--on-pair-buffer-killed'.
       (add-hook 'kill-buffer-hook #'alonso--on-pair-buffer-killed nil t)
       ;; The conversation bar shows only what matters: the buffer name, the
       ;; session trust grants and, at the very end, the status/spinner.  The

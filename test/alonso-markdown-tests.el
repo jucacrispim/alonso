@@ -433,7 +433,7 @@ incremental fontification produced it.  Returns the per-char faces."
                        (goto-char (point-max))
                        (insert piece)
                        (alonso--render-markdown-region (point-min) (point-max) t))
-                     ;; the turn ends: a final non-live render closes the segment
+                     ;; the turn ends: a final non-live render closes it
                      (alonso--render-markdown-region (point-min) (point-max))
                      (alonso-markdown-tests--faces-per-char))))))
 

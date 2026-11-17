@@ -574,13 +574,11 @@ empty context and dispatch a nil tool call, leaving the turn hanging."
     (interactive)
     (setq alonso--menu-answered t)
     (run-with-timer 0 nil #'alonso--trust-finish 'all))
-  ;; The confirmation menu.  The question for the tool being confirmed (icon +
-  ;; command/pattern/path) is shown as a dynamic `:info' line at the top of the
-  ;; menu, rebuilt each time the menu opens from
-  ;; `alonso--confirm-context'.  (`(:info FUN)' with a function
-  ;; description is used instead of a group description because the latter is
-  ;; only supported by newer transients; `:info' works with the bundled Emacs
-  ;; one too.)  `t' opens the trust sub-menu.
+  ;; The question for the tool being confirmed (icon + command/path) is a
+  ;; dynamic `:info' line, rebuilt each time the menu opens from
+  ;; `alonso--confirm-context'.  A function description is used instead of a
+  ;; group description: that one needs a newer transient.  `t' opens the trust
+  ;; sub-menu.
   (transient-define-prefix alonso--confirm-menu ()
     "Run the pending tool call?"
     [["Confirm"

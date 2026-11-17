@@ -32,8 +32,8 @@
 ;; tool calls: read-only ones run inline and are just displayed; mutating ones
 ;; ask for the user's approval before running.
 ;;
-;; The bridge protocol is documented in
-;; ~/mysrc/llm-bridge/docs/source/.
+;; The bridge protocol is documented at
+;; https://docs.poraodojuca.dev/llm-bridge/.
 ;;
 ;; This file is the thin entry point: it requires all of the others, so
 ;; `(require 'alonso)' gives you everything.  The commands live under the
