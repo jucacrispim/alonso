@@ -10,6 +10,19 @@ The format is based on `Keep a Changelog
 Unreleased
 ----------
 
+Added
+~~~~~
+
+- The provider and model names come from the bridge. Its ``ready`` event
+  announces ``default_provider`` and a ``providers`` list, each entry with the
+  models the provider answers for (and their context window) and the reasoning
+  levels it takes. ``C-c C-a p`` completes with the announced providers,
+  ``C-c C-a m`` with the models of the provider in use (any other name is
+  still taken as typed) and ``C-c C-a e`` with that provider's levels, or with
+  a token budget. An older bridge, which sends ``{"event":"ready"}`` alone,
+  falls back to ``alonso-provider-choices`` and
+  ``alonso-reasoning-effort-choices``.
+
 Changed
 ~~~~~~~
 

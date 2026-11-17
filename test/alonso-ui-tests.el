@@ -1878,6 +1878,27 @@ Call FN with LEFT; clean up afterwards."
   (with-current-buffer (get-buffer-create alonso-input-buffer-name)
     (symbol-value var)))
 
+(defconst alonso-ui-tests--ready-announcement
+  (concat "{\"event\":\"ready\",\"default_provider\":\"anthropic\","
+          "\"providers\":[{\"name\":\"anthropic\","
+          "\"model\":\"claude-sonnet-5-5\","
+          "\"models\":[{\"id\":\"claude-sonnet-5-5\",\"window\":1000000}],"
+          "\"reasoning\":{\"levels\":[\"low\",\"high\"],\"budget\":true}}]}")
+  "A `ready' event announcing a single provider and one model.")
+
+(defmacro alonso-ui-tests--with-announcement (&rest body)
+  "Run BODY with the bridge announcement fed and no override set."
+  (declare (indent 0))
+  `(unwind-protect
+       (progn
+         (alonso--handle-line alonso-ui-tests--ready-announcement)
+         (with-current-buffer (get-buffer-create alonso-input-buffer-name)
+           (setq alonso-request-provider "" alonso-request-model ""))
+         ,@body)
+     (with-current-buffer (get-buffer-create alonso-input-buffer-name)
+       (setq alonso-request-provider "" alonso-request-model ""))
+     (setq alonso-bridge-providers nil alonso-bridge-default-provider nil)))
+
 (ert-deftest alonso-ui--set-provider-interactive-stores-override ()
   :tags '(ui)
   (unwind-protect
@@ -1890,12 +1911,68 @@ Call FN with LEFT; clean up afterwards."
     (with-current-buffer (get-buffer-create alonso-input-buffer-name)
       (setq alonso-request-provider ""))))
 
+(ert-deftest alonso-ui--set-provider-offers-announced-names ()
+  :tags '(ui)
+  (alonso-ui-tests--with-announcement
+    (let (collection)
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (_prompt coll &rest _) (setq collection coll) "anthropic"))
+                ((symbol-function 'message) (lambda (&rest _) nil)))
+        (call-interactively #'alonso-set-provider))
+      (should (equal '("anthropic") collection))
+      (should (equal "anthropic" (alonso-ui-tests--request-value
+                                  'alonso-request-provider))))))
+
+(ert-deftest alonso-ui--set-provider-falls-back-without-announcement ()
+  :tags '(ui)
+  (unwind-protect
+      (let ((alonso-bridge-providers nil) collection)
+        (cl-letf (((symbol-function 'completing-read)
+                   (lambda (_prompt coll &rest _) (setq collection coll) ""))
+                  ((symbol-function 'message) (lambda (&rest _) nil)))
+          (call-interactively #'alonso-set-provider))
+        (should (equal alonso-provider-choices collection)))
+    (with-current-buffer (get-buffer-create alonso-input-buffer-name)
+      (setq alonso-request-provider ""))))
+
+(ert-deftest alonso-ui--set-model-offers-the-provider-models ()
+  :tags '(ui)
+  (alonso-ui-tests--with-announcement
+    (let (collection prompt)
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (p coll &rest _)
+                   (setq prompt p collection coll) "claude-opus-5-5"))
+                ((symbol-function 'message) (lambda (&rest _) nil)))
+        (call-interactively #'alonso-set-model))
+      (should (equal '("claude-sonnet-5-5") collection))
+      (should (equal "Model for anthropic (empty = provider default): " prompt))
+      ;; a model the bridge did not announce is still taken as typed
+      (should (equal "claude-opus-5-5" (alonso-ui-tests--request-value
+                                        'alonso-request-model))))))
+
+(ert-deftest alonso-ui--set-model-without-a-known-provider ()
+  :tags '(ui)
+  (unwind-protect
+      (let ((alonso-bridge-providers nil)
+            (alonso-bridge-default-provider nil)
+            (alonso-provider "")
+            collection prompt)
+        (with-current-buffer (get-buffer-create alonso-input-buffer-name)
+          (setq alonso-request-provider "" alonso-request-model ""))
+        (cl-letf (((symbol-function 'completing-read)
+                   (lambda (p coll &rest _) (setq prompt p collection coll) "m1"))
+                  ((symbol-function 'message) (lambda (&rest _) nil)))
+          (call-interactively #'alonso-set-model))
+        (should (equal "Model for the next prompt (empty = provider default): "
+                       prompt))
+        (should (null collection))
+        (should (equal "m1" (alonso-ui-tests--request-value
+                             'alonso-request-model))))
+    (with-current-buffer (get-buffer-create alonso-input-buffer-name)
+      (setq alonso-request-model ""))))
+
 (ert-deftest alonso-ui--set-model-stores-override ()
   :tags '(ui)
-  ;; NOTE: the interactive spec is the string "sModel ...", expanded by
-  ;; `Fcall_interactively' which calls the `read-string' subr directly, so it
-  ;; cannot be intercepted with `cl-letf' in batch (it would block on stdin).
-  ;; The body is therefore covered by a direct call.
   (unwind-protect
       (progn
         (alonso-set-model "m1")
@@ -1929,6 +2006,18 @@ Call FN with LEFT; clean up afterwards."
     (cl-letf (((symbol-function 'message) (lambda (&rest _) nil)))
       (call-interactively #'alonso-toggle-show-thinking))
     (should alonso-show-thinking)))
+
+(ert-deftest alonso-ui--set-reasoning-effort-offers-the-provider-levels ()
+  :tags '(ui)
+  (alonso-ui-tests--with-announcement
+    (let (collection)
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (_prompt coll &rest _) (setq collection coll) "high"))
+                ((symbol-function 'message) (lambda (&rest _) nil)))
+        (call-interactively #'alonso-set-reasoning-effort))
+      (should (equal '("low" "high") collection))
+      (should (equal "high" (alonso-ui-tests--request-value
+                             'alonso-request-reasoning-effort))))))
 
 (ert-deftest alonso-ui--set-reasoning-effort-interactive-stores-override ()
   :tags '(ui)

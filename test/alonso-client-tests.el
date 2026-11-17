@@ -127,6 +127,134 @@
                           (with-current-buffer (get-buffer "alonso")
                             (buffer-string)))))
 
+;;; The `ready' announcement
+
+(defconst alonso-client-tests--ready-announcement
+  (concat "{\"event\":\"ready\",\"default_provider\":\"deepseek\",\"providers\":["
+          "{\"name\":\"deepseek\",\"model\":\"deepseek-flash\","
+          "\"models\":[{\"id\":\"deepseek-flash\",\"window\":1000000}],"
+          "\"reasoning\":{\"levels\":[\"low\",\"medium\",\"high\"],"
+          "\"budget\":false}},"
+          "{\"name\":\"anthropic\",\"model\":\"claude-sonnet-5-5\","
+          "\"models\":[{\"id\":\"claude-sonnet-5-5\",\"window\":1000000},"
+          "{\"id\":\"claude-opus-4-5\",\"window\":200000}],"
+          "\"reasoning\":{\"levels\":[\"low\",\"medium\",\"high\",\"xhigh\","
+          "\"max\"],\"budget\":true}}]}")
+  "A `ready' event carrying the bridge's provider announcement.")
+
+;; Every test here starts from the state the bridge leaves behind: the
+;; announcement cleared and the per-request provider override emptied.
+(defmacro alonso-client-tests--with-announcement (&rest body)
+  "Run BODY with the bridge announcement fed and no provider override set."
+  (declare (indent 0))
+  `(unwind-protect
+       (progn
+         (setq alonso-ready nil alonso-line-buffer ""
+               alonso-bridge-providers nil alonso-bridge-default-provider nil)
+         (with-current-buffer (alonso--request-buffer)
+           (setq alonso-request-provider ""))
+         (alonso--process-filter
+          nil (concat alonso-client-tests--ready-announcement "\n"))
+         ,@body)
+     (with-current-buffer (alonso--request-buffer)
+       (setq alonso-request-provider ""))
+     (setq alonso-bridge-providers nil alonso-bridge-default-provider nil)))
+
+(ert-deftest alonso-client--ready-announces-providers ()
+  :tags '(client)
+  (alonso-client-tests--with-announcement
+    (should (and alonso-ready
+                 (equal "deepseek" alonso-bridge-default-provider)
+                 (equal '("deepseek" "anthropic") (alonso-provider-names))))))
+
+(ert-deftest alonso-client--ready-without-announcement-keeps-fallback ()
+  :tags '(client)
+  (alonso-client-tests--with-announcement
+    (setq alonso-bridge-providers nil alonso-bridge-default-provider nil)
+    (alonso--process-filter nil "{\"event\":\"ready\"}\n")
+    (should (and alonso-ready
+                 (null alonso-bridge-providers)
+                 (equal alonso-provider-choices (alonso-provider-names))))))
+
+(ert-deftest alonso-client--reset-session-clears-announcement ()
+  :tags '(client)
+  (alonso-client-tests--with-announcement
+    (alonso--reset-session)
+    (should (and (null alonso-bridge-providers)
+                 (null alonso-bridge-default-provider)))))
+
+(ert-deftest alonso-client--bridge-provider-lookup ()
+  :tags '(client)
+  (alonso-client-tests--with-announcement
+    (should (equal "anthropic"
+                   (gethash "name" (alonso-bridge-provider "anthropic"))))
+    ;; a provider the bridge never announced, and no provider at all
+    (should (null (alonso-bridge-provider "google")))
+    (should (null (alonso-bridge-provider nil)))))
+
+(ert-deftest alonso-client--current-provider-precedence ()
+  :tags '(client)
+  (alonso-client-tests--with-announcement
+    (let ((alonso-provider ""))
+      ;; the prompt's default, straight from the announcement
+      (should (equal "deepseek" (alonso-current-provider)))
+      ;; the session default wins over it
+      (let ((alonso-provider "google"))
+        (should (equal "google" (alonso-current-provider)))
+        ;; and the per-request override wins over both
+        (with-current-buffer (alonso--request-buffer)
+          (setq alonso-request-provider "anthropic"))
+        (should (equal "anthropic" (alonso-current-provider)))))))
+
+(ert-deftest alonso-client--current-provider-nil-when-nothing-known ()
+  :tags '(client)
+  (alonso-client-tests--with-announcement
+    (setq alonso-bridge-default-provider nil)
+    (let ((alonso-provider ""))
+      (should (null (alonso-current-provider))))))
+
+(ert-deftest alonso-client--provider-models-announced ()
+  :tags '(client)
+  (alonso-client-tests--with-announcement
+    (should (equal '("claude-sonnet-5-5" "claude-opus-4-5")
+                   (alonso-provider-models "anthropic")))
+    ;; no argument means the provider in use
+    (should (equal '("deepseek-flash") (alonso-provider-models)))
+    (should (null (alonso-provider-models "google")))))
+
+(ert-deftest alonso-client--model-choices-for-the-provider-in-use ()
+  :tags '(client)
+  (alonso-client-tests--with-announcement
+    (let ((alonso-provider "anthropic"))
+      (should (equal '("claude-sonnet-5-5" "claude-opus-4-5")
+                     (alonso-model-choices))))))
+
+(ert-deftest alonso-client--model-choices-fall-back-to-every-id ()
+  :tags '(client)
+  (alonso-client-tests--with-announcement
+    ;; a provider the bridge announced nothing for
+    (let ((alonso-provider "google"))
+      (should (equal '("deepseek-flash" "claude-sonnet-5-5" "claude-opus-4-5")
+                     (alonso-model-choices))))))
+
+(ert-deftest alonso-client--model-choices-empty-without-announcement ()
+  :tags '(client)
+  (alonso-client-tests--with-announcement
+    (setq alonso-bridge-providers nil alonso-bridge-default-provider nil)
+    (let ((alonso-provider ""))
+      (should (null (alonso-model-choices))))))
+
+(ert-deftest alonso-client--provider-levels-announced ()
+  :tags '(client)
+  (alonso-client-tests--with-announcement
+    (should (equal '("low" "medium" "high" "xhigh" "max")
+                   (alonso-provider-levels "anthropic")))
+    ;; no argument means the provider in use
+    (should (equal '("low" "medium" "high") (alonso-provider-levels)))
+    ;; a provider the bridge knows nothing about
+    (should (equal alonso-reasoning-effort-choices
+                   (alonso-provider-levels "google")))))
+
 ;;; Tools
 ;;
 ;; The tool implementations (read/write/shell/grep/glob/search_replace) moved

@@ -35,10 +35,11 @@ The prefix key ``C-c C-a`` holds every command:
      - Send ``quit`` to the bridge and stop.
    * - ``C-c C-a p``
      - ``alonso-set-provider``
-     - Set the provider override for the next prompt.
+     - Set the provider override for the next prompt (empty = default).
    * - ``C-c C-a m``
      - ``alonso-set-model``
      - Set the model override for the next prompt (empty = provider default).
+       Any name is taken, not only the ones announced.
    * - ``C-c C-a t``
      - ``alonso-set-thinking``
      - Toggle thinking on/off/unset per request.
@@ -48,8 +49,9 @@ The prefix key ``C-c C-a`` holds every command:
        t) or the transient placeholder with the braille spinner (nil).
    * - ``C-c C-a e``
      - ``alonso-set-reasoning-effort``
-     - Set the thinking depth (low/medium/high, empty = provider default) per
-       request.
+     - Set the thinking depth for the next prompt (empty = provider default).
+       The levels offered are the ones the provider accepts, and a token
+       budget is taken as typed.
    * - ``C-c C-a i``
      - ``alonso-attach-image-file``
      - Attach an image (by path) to the next prompt.

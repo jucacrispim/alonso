@@ -1352,11 +1352,12 @@ the input are then bound together as a single atomic window (see
 (defun alonso-set-provider (provider)
   "Set the provider override for the next prompt.
 PROVIDER is a provider name, or an empty string for the default.  The
-override is sent as the `provider' field of the next `prompt'."
+override is sent as the `provider' field of the next `prompt'.  The names
+offered are the ones the bridge announced in `ready'."
   (interactive
    (list (completing-read
           "Provider for the next prompt (empty = default): "
-          '("deepseek" "google") nil t)))
+          (alonso-provider-names) nil t)))
   (with-current-buffer (alonso--request-buffer)
     (setq-local alonso-request-provider provider))
   (force-mode-line-update t)
@@ -1368,8 +1369,15 @@ override is sent as the `provider' field of the next `prompt'."
   "Set the model override for the next prompt.
 MODEL empty means the provider default.  The override is sent as the
 `model' field of the next `prompt' and stays active for the following
-prompts until changed (mirrors the bridge)."
-  (interactive "sModel for the next prompt (empty = provider default): ")
+prompts until changed (mirrors the bridge).  The ids offered are the ones
+the bridge announced for the provider in use, and any other name is taken
+as typed."
+  (interactive
+   (list (completing-read
+          (if-let ((provider (alonso-current-provider)))
+              (format "Model for %s (empty = provider default): " provider)
+            "Model for the next prompt (empty = provider default): ")
+          (alonso-model-choices) nil nil)))
   (with-current-buffer (alonso--request-buffer)
     (setq-local alonso-request-model model))
   (force-mode-line-update t)
@@ -1397,12 +1405,12 @@ off, deepseek-chat) or `unset' (restores the provider's configured mode)."
 ;;;###autoload
 (defun alonso-set-reasoning-effort (effort)
   "Set the thinking depth (reasoning_effort) for the next prompt.
-EFFORT is one of \"low\", \"medium\" or \"high\"; empty means the provider
-default."
+EFFORT is one of the levels the provider announced, or a token budget for a
+provider that takes a number; empty means the provider default."
   (interactive
    (list (completing-read
           "Reasoning effort for the next prompt (empty = default): "
-          '("low" "medium" "high") nil t)))
+          (alonso-provider-levels) nil nil)))
   (with-current-buffer (alonso--request-buffer)
     (setq-local alonso-request-reasoning-effort effort))
   (force-mode-line-update t)

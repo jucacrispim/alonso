@@ -130,7 +130,7 @@ its provider), so these are rarely needed."
 
 (defcustom alonso-provider ""
   "Optional provider override (passed as the -provider flag).
-E.g. \"deepseek\" or \"google\".  Empty = default."
+E.g. \"deepseek\", \"google\" or \"anthropic\".  Empty = default."
   :type 'string
   :group 'alonso)
 
@@ -152,10 +152,24 @@ request, use `alonso-request-thinking'."
 
 (defcustom alonso-reasoning-effort ""
   "Optional reasoning effort / thinking depth (passed as -reasoning-effort flag).
-E.g. \"low\", \"medium\", \"high\".  Empty = provider default.  Only takes
-effect with thinking on.  To override per request, use
-`alonso-request-reasoning-effort'."
+E.g. \"low\", \"medium\", \"high\", or a token budget for anthropic and
+google.  Empty = provider default.  Only takes effect with thinking on.  To
+override per request, use `alonso-request-reasoning-effort'."
   :type 'string
+  :group 'alonso)
+
+(defcustom alonso-provider-choices '("deepseek" "google" "anthropic")
+  "Providers to offer when the bridge does not announce its own.
+The bridge sends the list in the `ready' event; this is the fallback for an
+older bridge, which sends `{\"event\":\"ready\"}' alone."
+  :type '(repeat string)
+  :group 'alonso)
+
+(defcustom alonso-reasoning-effort-choices '("low" "medium" "high" "xhigh" "max")
+  "Reasoning levels to offer when the bridge does not announce them.
+The bridge reports the levels each provider accepts in the `ready' event;
+this is the fallback for an older bridge."
+  :type '(repeat string)
   :group 'alonso)
 
 (defcustom alonso-onnxruntime-lib
@@ -340,7 +354,10 @@ Called when the bridge is restarted or shut down, ending the session."
         alonso--trust-class nil
         alonso--trust-tools nil
         alonso--trust-all nil
-        alonso--trust-context nil))
+        alonso--trust-context nil
+        ;; the provider announcement belongs to the bridge that made it
+        alonso-bridge-providers nil
+        alonso-bridge-default-provider nil))
 
 ;;; Per-request overrides (model, thinking and thinking depth)
 
@@ -494,6 +511,77 @@ PARAMS is a flat plist of alternating keys/values, e.g. (\"text\" \"oi\")."
 (defvar alonso-ready nil
   "Non-nil after the bridge sends the `ready' event (handshake done).")
 
+;; What the bridge announces in `ready': the providers it can reach, the model
+;; each one uses now, the ids it answers for and the reasoning effort it takes.
+;; A client that offers these names has no copy of them to keep in sync.
+
+(defvar alonso-bridge-providers nil
+  "Providers announced by the bridge, or nil when it announced none.
+A list of hash tables, each with \"name\", \"model\", \"models\" (hash tables
+with \"id\" and \"window\") and \"reasoning\" (\"levels\" and \"budget\").")
+
+(defvar alonso-bridge-default-provider nil
+  "Provider the bridge uses when a prompt carries no provider override.")
+
+(defun alonso--on-ready (ev)
+  "Handle a `ready' event EV, the bridge's announcement of itself.
+An older bridge sends the event alone, leaving the provider list nil."
+  (setq alonso-ready t
+        alonso-bridge-default-provider (gethash "default_provider" ev)
+        alonso-bridge-providers (gethash "providers" ev)))
+
+(defun alonso-bridge-provider (name)
+  "Return the bridge announcement for provider NAME, or nil.
+NAME may be nil, and a bridge that announces no provider gives nil too."
+  (and name
+       (cl-find name alonso-bridge-providers
+                :key (lambda (info) (gethash "name" info)) :test #'equal)))
+
+(defun alonso--announced-provider-names ()
+  "Return the provider names the bridge announced, in its own order."
+  (mapcar (lambda (info) (gethash "name" info)) alonso-bridge-providers))
+
+(defun alonso-provider-names ()
+  "Return the provider names to offer, prefers the bridge announcement."
+  (or (alonso--announced-provider-names) alonso-provider-choices))
+
+(defun alonso--request-provider-value ()
+  "Return the provider override set for the next prompt, or nil."
+  (with-current-buffer (alonso--request-buffer)
+    (unless (string-empty-p alonso-request-provider)
+      alonso-request-provider)))
+
+(defun alonso-current-provider ()
+  "Return the provider to use in the next prompt, or nil when none is known."
+  (or (alonso--request-provider-value)
+      (unless (string-empty-p alonso-provider) alonso-provider)
+      alonso-bridge-default-provider))
+
+(defun alonso-provider-models (&optional provider)
+  "Return the model ids announced for PROVIDER, the current one by default.
+An empty list means nothing is known about that provider, so the client
+accepts whatever model name you type."
+  (let ((info (alonso-bridge-provider (or provider (alonso-current-provider)))))
+    (mapcar (lambda (model) (gethash "id" model))
+            (and info (gethash "models" info)))))
+
+(defun alonso-model-choices ()
+  "Return the model ids to offer for the next prompt.
+The ids of the provider in use, or every announced id when that provider
+announces none."
+  (let ((current (alonso-current-provider)))
+    (delete-dups (or (and current (alonso-provider-models current))
+                     (apply #'append
+                            (mapcar #'alonso-provider-models
+                                    (alonso--announced-provider-names)))))))
+
+(defun alonso-provider-levels (&optional provider)
+  "Return the reasoning levels announced for PROVIDER, current one by default."
+  (let* ((info (alonso-bridge-provider (or provider (alonso-current-provider))))
+         (reasoning (and info (gethash "reasoning" info))))
+    (or (and reasoning (gethash "levels" reasoning))
+        alonso-reasoning-effort-choices)))
+
 (defvar alonso--process-output ""
   "Non-JSON output collected from the llm-bridge process.
 Anything the process writes that is not a JSON event line (typically
@@ -540,7 +628,7 @@ here, so a launch failure can be reported instead of a bare timeout.")
               (concat alonso--process-output line "\n"))
       (let ((event (gethash "event" ev)))
         (cl-case (intern event)
-          (ready        (setq alonso-ready t))
+          (ready        (alonso--on-ready ev))
           (chunk        (alonso--on-chunk (gethash "text" ev)))
           (thinking     (alonso--on-thinking (gethash "text" ev)))
           (tool_call    (alonso--on-tool-call ev))
