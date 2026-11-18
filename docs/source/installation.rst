@@ -7,12 +7,13 @@ Requirements
 * Emacs 27.1 or newer.
 * `transient <https://github.com/magit/transient>`_ (for the tool-confirmation
   menus).  When it is missing, alonso falls back to ``read-char-choice``.
-* A working **llm-bridge** binary on ``PATH`` (see the
-  `llm-bridge docs <https://docs.poraodojuca.dev/llm-bridge/>`_).  The command
-  can be customised through the ``alonso-command`` defcustom.
 
 Installing the package
 ----------------------
+
+Install `llm-bridge <https://docs.poraodojuca.dev/llm-bridge/>`_ and make sure
+its binary is on your ``PATH``. To use a different command, set
+``alonso-command``.
 
 Clone the repository and put it on the load path, then require it::
 

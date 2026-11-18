@@ -1,21 +1,36 @@
 # alonso
 
-Emacs client for [llm-bridge](https://github.com/poraodojuca/llm-bridge), a
-long-running Go process that bridges the editor and the LLM over JSON lines
-(stdin/stdout).  alonso starts the bridge as a subprocess, reads its events
-asynchronously and displays the conversation in a dedicated buffer.  The bridge
-executes the tool calls: read-only ones run inline and are just displayed, and
-mutating ones ask for your approval before running.
+**alonso** is an AI coding assistant for Emacs. Ask a question about your
+code, get help tracking down a test failure, or ask for an edit without
+leaving your editor.
+
+## Features
+
+- **Chat in Emacs.** Read replies as they stream while keeping your prompt
+  in a separate buffer.
+- **Show what you're seeing.** Attach a screenshot, diagram, or other image
+  when the selected model supports image inputs.
+- **Work with your project.** Ask alonso to search files, suggest edits,
+  or run your tests. Review file changes and shell commands before they run.
+- **Run tools in a sandbox.** By default, `caged` limits what tools can access.
+- **Switch models as you work.** Pick a provider and model from Emacs.
+  Adjust reasoning settings without restarting the session.
+- **Keep an eye on usage.** See how long each turn took and check the
+  estimated cost when pricing is available.
+
+Once it's set up, open alonso with `C-c C-a l` and try:
+“Where should I start reading this project?”
 
 ## Requirements
 
 * Emacs 27.1 or newer.
 * [transient](https://github.com/magit/transient) (for the tool-confirmation
   menus).  When it is missing, alonso falls back to `read-char-choice`.
-* A working **llm-bridge** binary on `PATH`.  The command can be customised
-  through the `alonso-command` defcustom.
 
 ## Installation
+
+Install [llm-bridge](https://github.com/poraodojuca/llm-bridge) and make sure
+its binary is on your `PATH`. To use a different command, set `alonso-command`.
 
 Clone the repository and put it on the load path, then require it:
 
