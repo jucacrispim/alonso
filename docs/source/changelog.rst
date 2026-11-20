@@ -7,6 +7,28 @@ The format is based on `Keep a Changelog
 <https://keepachangelog.com/en/1.1.0/>`_, and this project adheres to
 `Semantic Versioning <https://semver.org/spec/v2.0.0.html>`_.
 
+Unreleased
+----------
+
+Added
+~~~~~
+
+- The output of a tool that answers in pieces is shown as it arrives. The
+  bridge sends each fragment in a ``tool_output`` event, and the conversation
+  keeps them together, in the shadow face, between the tool call and the
+  model's next output. ``alonso-tool-output-limit`` (8000 characters) caps what
+  one call shows, with a line saying the output was truncated.
+
+Changed
+~~~~~~~
+
+- An MCP tool is shown as ``<server>/<tool>`` with a 🔌 icon instead of the
+  full ``mcp__<server>__<tool>`` the bridge exposes. The name sent back in a
+  ``tool_confirm`` is unchanged.
+- A ``tool_call`` event always gets a title line. It used to be classified by
+  tool name, so a read-only MCP tool, which the bridge already ran, was
+  displayed as a ``Run tool: ...?`` question that nothing would answer.
+
 0.6.0 (2026-11-17)
 ------------------
 

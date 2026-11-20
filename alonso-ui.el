@@ -131,6 +131,21 @@ finished.  Add functions with `add-hook'."
   "Face for turn separators and metadata lines."
   :group 'alonso)
 
+(defface alonso-tool-output-face
+  '((t (:inherit shadow)))
+  "Face for the output a tool streams into the conversation.
+Machine text, not prose: it sits between the tool call and the model's next
+output."
+  :group 'alonso)
+
+(defcustom alonso-tool-output-limit 8000
+  "Maximum characters of a tool's streamed output shown in the conversation.
+A server that answers with a long stream is cut here, with a line saying so;
+the bridge keeps its own byte limit and the model gets the whole text in the
+history.  Set it to nil to show everything."
+  :type '(choice (const :tag "No limit" nil) integer)
+  :group 'alonso)
+
 (defcustom alonso-show-thinking t
   "How to display the model's chain-of-thought (thinking events).
 
@@ -418,6 +433,58 @@ are listed by name and class trusts as \"tool=class-key\" (e.g.
       "")))
 
 ;;; Event render handlers (dispatched by the client's `--handle-line')
+
+(defvar alonso--tool-output-id nil
+  "Id of the tool call whose output is being streamed, or nil.")
+
+(defvar alonso--tool-output-chars 0
+  "Characters of the current tool output already inserted.")
+
+(defvar alonso--tool-output-truncated nil
+  "Non-nil once `alonso-tool-output-limit' was reported for this call.")
+
+(defun alonso--reset-tool-output ()
+  "Forget the streaming state of the last tool output.
+The bridge numbers the calls of a turn from scratch, so a new turn reuses
+the ids: without this the output of the first call of a turn would continue
+the block of the call with the same id in the previous one."
+  (setq alonso--tool-output-id nil
+        alonso--tool-output-chars 0
+        alonso--tool-output-truncated nil))
+
+(defun alonso--on-tool-output (ev)
+  "Handle a `tool_output' event EV: one fragment of a tool's stream.
+A call id different from the last one opens a new block.  The fragments of
+one call are joined with nothing in between, since the bridge sends them as
+they arrive, and the text is cut once at `alonso-tool-output-limit' with a
+line saying so."
+  (alonso--render-answer)
+  (let ((id (gethash "id" ev))
+        (text (gethash "text" ev)))
+    (when (and (stringp text) (not (string-empty-p text)))
+      (unless (equal id alonso--tool-output-id)
+        (setq alonso--tool-output-id id
+              alonso--tool-output-chars 0
+              alonso--tool-output-truncated nil)
+        (alonso--pin-window-to-end)
+        (alonso--insert "\n"))
+      (cond
+       (alonso--tool-output-truncated nil)
+       ((and alonso-tool-output-limit
+             (> (+ alonso--tool-output-chars (length text))
+                alonso-tool-output-limit))
+        (let ((room (max 0 (- alonso-tool-output-limit
+                              alonso--tool-output-chars))))
+          (alonso--insert-propertized (substring text 0 room)
+                                      'face 'alonso-tool-output-face))
+        (alonso--insert-propertized "\n(tool output truncated)\n"
+                                    'face 'alonso-separator-face)
+        (setq alonso--tool-output-chars alonso-tool-output-limit
+              alonso--tool-output-truncated t))
+       (t
+        (alonso--insert-propertized text 'face 'alonso-tool-output-face)
+        (setq alonso--tool-output-chars (+ alonso--tool-output-chars
+                                           (length text))))))))
 
 (defun alonso--on-chunk (text)
   "Handle a `chunk' event with TEXT (streaming fragment)."
@@ -779,6 +846,7 @@ a turn is in progress."
             alonso--current-turn-input-tokens 0
             alonso--current-turn-output-tokens 0
             alonso--turn-finalized nil)
+      (alonso--reset-tool-output)
       (alonso--start-spinner)
       (alonso--insert-propertized
        "\n──────────────────────────────\n"

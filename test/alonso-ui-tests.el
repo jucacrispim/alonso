@@ -742,6 +742,123 @@ right (the `alonso-open' layout) and makes the pair atomic."
   (alonso--on-turn-end (alonso-ui-tests--turn-end-event))
   (should (not alonso--after-tool-separator-pending)))
 
+;;; Streamed tool output: the `tool_output' fragments land in the conversation
+
+(defun alonso-ui-tests--tool-output-event (id text)
+  "Return a `tool_output' event for ID carrying TEXT."
+  (let ((ev (make-hash-table :test 'equal)))
+    (puthash "event" "tool_output" ev)
+    (puthash "id" id ev)
+    (puthash "text" text ev)
+    ev))
+
+(ert-deftest alonso-ui--tool-output-fragments-join-in-one-block ()
+  :tags '(ui)
+  (alonso-ui-tests--reset-conversation-state)
+  (alonso--reset-tool-output)
+  (let ((alonso-tool-output-limit 8000)
+        (start (with-current-buffer (alonso--get-buffer) (point-max))))
+    (alonso--on-tool-output (alonso-ui-tests--tool-output-event "call_1" "first\n"))
+    (alonso--on-tool-output (alonso-ui-tests--tool-output-event "call_1" "second\n"))
+    (should (equal "\nfirst\nsecond\n"
+                   (alonso-ui-tests--conversation-text-from start)))))
+
+(ert-deftest alonso-ui--tool-output-is-inserted-in-the-output-face ()
+  :tags '(ui)
+  (alonso-ui-tests--reset-conversation-state)
+  (alonso--reset-tool-output)
+  (let ((alonso-tool-output-limit 8000)
+        (start (with-current-buffer (alonso--get-buffer) (point-max))))
+    (alonso--on-tool-output (alonso-ui-tests--tool-output-event "call_1" "text\n"))
+    (should (eq 'alonso-tool-output-face
+                (get-text-property (1+ start) 'face (alonso--get-buffer))))))
+
+(ert-deftest alonso-ui--tool-output-new-call-opens-a-new-block ()
+  :tags '(ui)
+  (alonso-ui-tests--reset-conversation-state)
+  (alonso--reset-tool-output)
+  (let ((alonso-tool-output-limit 8000)
+        (start (with-current-buffer (alonso--get-buffer) (point-max))))
+    (alonso--on-tool-output (alonso-ui-tests--tool-output-event "call_1" "a\n"))
+    (alonso--on-tool-output (alonso-ui-tests--tool-output-event "call_2" "b\n"))
+    (should (equal "\na\n\nb\n"
+                   (alonso-ui-tests--conversation-text-from start)))))
+
+;; An empty fragment is not a block: nothing is inserted and no state changes.
+
+(ert-deftest alonso-ui--tool-output-empty-fragment-is-ignored ()
+  :tags '(ui)
+  (alonso-ui-tests--reset-conversation-state)
+  (alonso--reset-tool-output)
+  (let ((start (with-current-buffer (alonso--get-buffer) (point-max))))
+    (alonso--on-tool-output (alonso-ui-tests--tool-output-event "call_1" ""))
+    (should (and (equal "" (alonso-ui-tests--conversation-text-from start))
+                 (null alonso--tool-output-id)))))
+
+(ert-deftest alonso-ui--tool-output-is-cut-at-the-limit ()
+  :tags '(ui)
+  (alonso-ui-tests--reset-conversation-state)
+  (alonso--reset-tool-output)
+  (let ((alonso-tool-output-limit 5)
+        (start (with-current-buffer (alonso--get-buffer) (point-max))))
+    (alonso--on-tool-output (alonso-ui-tests--tool-output-event "call_1" "123456789"))
+    (alonso--on-tool-output (alonso-ui-tests--tool-output-event "call_1" "more"))
+    (should (equal "\n12345\n(tool output truncated)\n"
+                   (alonso-ui-tests--conversation-text-from start)))))
+
+;; A fragment that arrives after the limit is dropped whole.
+
+(ert-deftest alonso-ui--tool-output-drops-everything-past-the-limit ()
+  :tags '(ui)
+  (alonso-ui-tests--reset-conversation-state)
+  (alonso--reset-tool-output)
+  (let ((alonso-tool-output-limit 5)
+        (start (with-current-buffer (alonso--get-buffer) (point-max))))
+    (alonso--on-tool-output (alonso-ui-tests--tool-output-event "call_1" "12345"))
+    ;; exactly at the limit: nothing is cut yet
+    (should (equal "\n12345" (alonso-ui-tests--conversation-text-from start)))
+    (alonso--on-tool-output (alonso-ui-tests--tool-output-event "call_1" "x"))
+    (should (equal "\n12345\n(tool output truncated)\n"
+                   (alonso-ui-tests--conversation-text-from start)))))
+
+(ert-deftest alonso-ui--tool-output-limit-nil-shows-everything ()
+  :tags '(ui)
+  (alonso-ui-tests--reset-conversation-state)
+  (alonso--reset-tool-output)
+  (let ((alonso-tool-output-limit nil)
+        (start (with-current-buffer (alonso--get-buffer) (point-max))))
+    (alonso--on-tool-output (alonso-ui-tests--tool-output-event "call_1" "123456789"))
+    (should (equal "\n123456789"
+                   (alonso-ui-tests--conversation-text-from start)))))
+
+(ert-deftest alonso-ui--reset-tool-output-clears-the-block ()
+  :tags '(ui)
+  (setq alonso--tool-output-id "call_1"
+        alonso--tool-output-chars 7
+        alonso--tool-output-truncated t)
+  (alonso--reset-tool-output)
+  (should (and (null alonso--tool-output-id)
+               (= 0 alonso--tool-output-chars)
+               (null alonso--tool-output-truncated))))
+
+;; A new prompt starts the output of the turn from scratch: the ids repeat.
+
+(ert-deftest alonso-ui--new-prompt-resets-the-tool-output-block ()
+  :tags '(ui)
+  (alonso-ui-tests--reset-conversation-state)
+  (setq alonso-in-turn nil alonso-pending-tools nil
+        alonso--tool-output-id "call_1"
+        alonso--tool-output-chars 3
+        alonso--tool-output-truncated t)
+  (unwind-protect
+      (cl-letf (((symbol-function 'alonso--ensure-ready) (lambda () nil))
+                ((symbol-function 'alonso--send) (lambda (&rest _) nil)))
+        (alonso--prompt-send "hello")
+        (should (and (null alonso--tool-output-id)
+                     (= 0 alonso--tool-output-chars)
+                     (null alonso--tool-output-truncated))))
+    (alonso-ui-tests--spinner-cleanup)))
+
 ;;; Slash command /project
 
 (defun alonso-ui-tests--with-project-dir (fn)

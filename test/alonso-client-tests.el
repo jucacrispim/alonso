@@ -183,6 +183,19 @@
     (should (and (null alonso-bridge-providers)
                  (null alonso-bridge-default-provider)))))
 
+;; The bridge numbers the calls of a turn from scratch, so a new session must
+;; not continue the output block of a call with the same id.
+
+(ert-deftest alonso-client--reset-session-forgets-the-tool-output-block ()
+  :tags '(client)
+  (setq alonso--tool-output-id "call_1"
+        alonso--tool-output-chars 42
+        alonso--tool-output-truncated t)
+  (alonso--reset-session)
+  (should (and (null alonso--tool-output-id)
+               (= 0 alonso--tool-output-chars)
+               (null alonso--tool-output-truncated))))
+
 (ert-deftest alonso-client--bridge-provider-lookup ()
   :tags '(client)
   (alonso-client-tests--with-announcement
@@ -684,6 +697,14 @@ returned and ARGS the arguments it received."
       (alonso--handle-line (alonso-client-tests--event-json "event" "tool_confirm" "id" "c1")))
     (should (hash-table-p got))))
 
+(ert-deftest alonso-client--handle-line-dispatches-tool-output ()
+  :tags '(client)
+  (let (got)
+    (cl-letf (((symbol-function 'alonso--on-tool-output) (lambda (ev) (setq got ev))))
+      (alonso--handle-line (alonso-client-tests--event-json
+                            "event" "tool_output" "id" "c1" "text" "x")))
+    (should (hash-table-p got))))
+
 (ert-deftest alonso-client--handle-line-dispatches-turn-end ()
   :tags '(client)
   (let (got)
@@ -776,7 +797,7 @@ returned and ARGS the arguments it received."
   :tags '(client)
   (let ((alonso-pending-tools nil) (alonso-confirm-tools t) shown dispatched)
     (cl-letf (((symbol-function 'alonso--show-tool-call)
-               (lambda (_id name _input &optional _meta) (setq shown name)))
+               (lambda (_id name _input &optional _meta _read-only) (setq shown name)))
               ((symbol-function 'alonso--dispatch-tool)
                (lambda (&rest _) (setq dispatched t))))
       (alonso--on-tool-call (alonso-client-tests--hash "id" "c1" "name" "read"
@@ -785,13 +806,26 @@ returned and ARGS the arguments it received."
                  (null dispatched)
                  (null alonso-pending-tools)))))
 
+;; A `tool_call' always carries the read-only flag, whatever the tool is: the
+;; event only carries tools the bridge already ran.
+
+(ert-deftest alonso-client--tool-call-forces-the-read-only-display ()
+  :tags '(client)
+  (let ((alonso-pending-tools nil) (alonso-confirm-tools t) read-only)
+    (cl-letf (((symbol-function 'alonso--show-tool-call)
+               (lambda (_id _name _input &optional _meta ro) (setq read-only ro))))
+      (alonso--on-tool-call
+       (alonso-client-tests--hash "id" "c1" "name" "mcp__git__git_status"
+                                  "input" (make-hash-table))))
+    (should read-only)))
+
 ;; The `knowledge' tool is read-only too: shown, nothing pending.
 
 (ert-deftest alonso-client--tool-call-knowledge-is-only-shown ()
   :tags '(client)
   (let ((alonso-pending-tools nil) (alonso-confirm-tools t) shown)
     (cl-letf (((symbol-function 'alonso--show-tool-call)
-               (lambda (_id name _input &optional _meta) (setq shown name))))
+               (lambda (_id name _input &optional _meta _read-only) (setq shown name))))
       (alonso--on-tool-call (alonso-client-tests--hash "id" "c1" "name" "knowledge"
                                                        "input" (make-hash-table))))
     (should (and (equal "knowledge" shown) (null alonso-pending-tools)))))
@@ -912,7 +946,7 @@ returned and ARGS the arguments it received."
   :tags '(client)
   (let (shown)
     (cl-letf (((symbol-function 'alonso--show-tool-call)
-               (lambda (_id _name _input &optional meta) (setq shown meta))))
+               (lambda (_id _name _input &optional meta _read-only) (setq shown meta))))
       (alonso--on-tool-call (alonso-client-tests--hash "id" "c1" "name" "read"
                                                        "input" (make-hash-table)
                                                        "risk" "low")))

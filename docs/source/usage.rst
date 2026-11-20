@@ -187,6 +187,33 @@ the session (they are also cleared when the bridge is restarted).  The
 *specific* scope is not shown in the mode line: it covers a single call, already
 tagged ``[trusted]`` in the conversation.
 
+MCP tools
+~~~~~~~~~
+
+The bridge offers the tools of the MCP servers in your config as
+``mcp__<server>__<tool>``.  alonso shows them as ``<server>/<tool>`` with a 🔌
+icon.  The event decides how one is displayed, not the name: a ``tool_call``
+is a tool the bridge already ran, so it gets a title line, and a
+``tool_confirm`` asks for approval like any other mutating tool.
+
+Streamed output
+~~~~~~~~~~~~~~~
+
+A tool that answers in pieces streams each one as a ``tool_output`` event.
+The fragments land in the conversation as they arrive, in the shadow face,
+between the tool call and the model's next output::
+
+   🔌 git/git_status
+
+   On branch main
+   nothing to commit, working tree clean
+
+   (tool output truncated)
+
+A call is cut at ``alonso-tool-output-limit`` characters, 8000 by default,
+and the truncated line says so.  Set it to nil to show everything.  The
+bridge has its own limit, and the history gets the whole text either way.
+
 Hooks
 -----
 

@@ -50,8 +50,26 @@ Shown before the tool name in the confirmation questions (the
 `Run tool: ...?' prompt and its recorded line).")
 
 (defun alonso--tool-icon (name)
-  "Return the unicode icon for tool NAME (a generic wrench when unknown)."
-  (or (cdr (assoc name alonso-tool-icons)) "🔧"))
+  "Return the unicode icon for tool NAME (a generic wrench when unknown).
+An MCP tool (a name the bridge exposes as `mcp__<server>__<tool>') gets a
+plug."
+  (or (cdr (assoc name alonso-tool-icons))
+      (if (string-prefix-p "mcp__" name) "🔌" "🔧")))
+
+(defun alonso--tool-display-name (name)
+  "Return NAME the way it is shown to the human.
+The bridge exposes an MCP tool as `mcp__<server>__<tool>', so that one is
+displayed as `<server>/<tool>'.  Only the first `__' separates the two: a
+tool name may carry one of its own, since the bridge sanitizes it.  A name
+with an empty half keeps its original form, because this is a display guess
+and not protocol parsing."
+  (if (string-prefix-p "mcp__" name)
+      (let* ((rest (substring name (length "mcp__")))
+             (sep (string-match "__" rest)))
+        (if (and sep (> sep 0) (< (+ sep 2) (length rest)))
+            (concat (substring rest 0 sep) "/" (substring rest (+ sep 2)))
+          name))
+    name))
 
 (defun alonso--tool-detail-string (name input)
   "Return the plain-text detail of tool NAME with INPUT, for the minibuffer.
@@ -86,11 +104,12 @@ right after the name, e.g. \"🖥 Run tool: shell · ps aux? \".  When RISK is
 question states the danger before the one-keystroke answer.  The minibuffer
 itself cannot render colors, so the detail and the tag are plain text here."
   (let ((detail (alonso--tool-detail-string name input))
-        (tag (alonso--risk-tag risk)))
+        (tag (alonso--risk-tag risk))
+        (label (alonso--tool-display-name name)))
     (if (string-empty-p detail)
-        (format "%s Run tool: %s%s? " (alonso--tool-icon name) name tag)
+        (format "%s Run tool: %s%s? " (alonso--tool-icon name) label tag)
       (format "%s Run tool: %s · %s%s? "
-              (alonso--tool-icon name) name detail tag))))
+              (alonso--tool-icon name) label detail tag))))
 
 (defun alonso--tool-input-pairs (input)
   "Return INPUT (a hash-table) as a sorted list of (key . value) pairs."
@@ -222,12 +241,17 @@ below."
            pairs "\n"))))
     ""))
 
-(defun alonso--show-tool-call (_id name input &optional meta)
+(defun alonso--show-tool-call (_id name input &optional meta read-only)
   "Insert the tool-call line and its parameters for tool NAME with INPUT.
 
 META is the optional confirmation metadata (`alonso--confirm-meta'): when
 present, the number of commands a `shell' one-liner runs, the risk level and
 the taint warning are shown between the header and the parameters.
+
+READ-ONLY non-nil forces the title line, without the confirmation question.
+It is what a `tool_call' event passes, since that event only carries tools
+the bridge already ran.  Nil falls back to `alonso--tool-read-only-p', which
+is a guess over the name and the arguments.
 
 Read-only tools (which run without confirmation) get a title line with the
 tool's icon and name, e.g. \"📄 read\".  Mutating tools (which ask for an
@@ -241,13 +265,14 @@ so the question is visible from the start (not only after the answer).
 Returns the buffer position of the visible title/parameters."
   (alonso--render-answer)
   (alonso--thinking-placeholder-end)
-  (let* ((read-only (alonso--tool-read-only-p name input))
+  (let* ((read-only (or read-only (alonso--tool-read-only-p name input)))
+         (label (alonso--tool-display-name name))
          (tag (alonso--risk-tag (plist-get meta :risk)))
          (header (if read-only
-                     (format "\n%s %s\n" (alonso--tool-icon name) name)
+                     (format "\n%s %s\n" (alonso--tool-icon name) label)
                    (concat "\n"
                            (alonso--tool-icon name)
-                           " Run tool: " name tag
+                           " Run tool: " label tag
                            "? \n")))
          (pos (alonso--insert-propertized header)))
     ;; point at the start of the visible line (title or question), where the

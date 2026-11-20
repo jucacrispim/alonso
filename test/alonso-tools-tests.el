@@ -140,6 +140,53 @@
   :tags '(tools)
   (should (equal "🔧" (alonso--tool-icon "something_else"))))
 
+(ert-deftest alonso-tools--icon-mcp-is-a-plug ()
+  :tags '(tools)
+  (should (equal "🔌" (alonso--tool-icon "mcp__git__git_status"))))
+
+;;; MCP tool names: `mcp__<server>__<tool>' is shown as `<server>/<tool>'
+
+(ert-deftest alonso-tools--display-name-of-a-builtin-is-the-name ()
+  :tags '(tools)
+  (should (equal "shell" (alonso--tool-display-name "shell"))))
+
+(ert-deftest alonso-tools--display-name-of-an-mcp-tool-joins-server-and-tool ()
+  :tags '(tools)
+  (should (equal "git/git_status"
+                 (alonso--tool-display-name "mcp__git__git_status")))
+  ;; the tool half may carry a `__' of its own (the bridge sanitizes and
+  ;; truncates names), so only the first separator is the server's
+  (should (equal "srv/tool__x" (alonso--tool-display-name "mcp__srv__tool__x"))))
+
+(ert-deftest alonso-tools--display-name-keeps-an-unparsable-mcp-name ()
+  :tags '(tools)
+  ;; no tool half at all
+  (should (equal "mcp__git" (alonso--tool-display-name "mcp__git")))
+  ;; an empty tool half
+  (should (equal "mcp__git__" (alonso--tool-display-name "mcp__git__")))
+  ;; an empty server half
+  (should (equal "mcp____tool" (alonso--tool-display-name "mcp____tool"))))
+
+;; The event type decides the display: a `tool_call' forces the title line even
+;; for a tool `alonso--tool-read-only-p' does not know.
+
+(ert-deftest alonso-tools--show-tool-call-read-only-forces-the-title ()
+  :tags '(tools)
+  (let* ((buf (alonso-tools-tests--alonso-buffer))
+         (start (with-current-buffer buf (point-max))))
+    (alonso--show-tool-call
+     "call_m" "mcp__git__git_status" (alonso-tools-tests--input) nil t)
+    (let ((text (with-current-buffer buf
+                  (buffer-substring-no-properties start (point-max)))))
+      (should (and (string-match-p (regexp-quote "🔌 git/git_status") text)
+                   (not (string-match-p (regexp-quote "Run tool:") text)))))))
+
+(ert-deftest alonso-tools--confirm-question-shows-the-mcp-display-name ()
+  :tags '(tools)
+  (should (equal "🔌 Run tool: git/git_status? "
+                 (alonso--confirm-question "mcp__git__git_status"
+                                           (alonso-tools-tests--input)))))
+
 (ert-deftest alonso-tools--confirm-question-shell-shows-command ()
   :tags '(tools)
   (should (string-match-p

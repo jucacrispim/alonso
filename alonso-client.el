@@ -41,6 +41,8 @@
 (declare-function alonso--on-usage-delta "alonso-ui")
 (declare-function alonso--on-files-changed "alonso-ui")
 (declare-function alonso--on-hook-action "alonso-ui")
+(declare-function alonso--on-tool-output "alonso-ui")
+(declare-function alonso--reset-tool-output "alonso-ui")
 (declare-function alonso--on-error "alonso-ui")
 (declare-function alonso--on-cancelled "alonso-ui")
 (declare-function alonso--show-tool-call "alonso-tools")
@@ -318,6 +320,7 @@ A plist (:name :input :id :rest :denied) saved by
   "Reset the session token counters, model and trust state.
 Called when the bridge is restarted or shut down, ending the session."
   (alonso--stop-spinner)
+  (alonso--reset-tool-output)
   (setq alonso-session-input-tokens 0
         alonso-session-output-tokens 0
         alonso-session-cache-hit-tokens 0
@@ -615,6 +618,7 @@ here, so a launch failure can be reported instead of a bare timeout.")
           (thinking     (alonso--on-thinking (gethash "text" ev)))
           (tool_call    (alonso--on-tool-call ev))
           (tool_confirm (alonso--on-tool-confirm ev))
+          (tool_output  (alonso--on-tool-output ev))
           (turn_end     (alonso--on-turn-end ev))
           (files_changed (alonso--on-files-changed ev))
           (usage_delta  (alonso--on-usage-delta ev))
@@ -628,15 +632,14 @@ here, so a launch failure can be reported instead of a bare timeout.")
 (defun alonso--on-tool-call (ev)
   "Handle a `tool_call' event EV: a read-only tool the bridge already ran.
 
-Read-only tools (read/grep/glob/knowledge) are executed by the bridge itself
-in the same turn, so a `tool_call' needs no action from the client: it is
-only displayed.  Mutating tools (shell/write/search_replace/curl, and a
-`knowledge' write) arrive as `tool_confirm' events instead (see
-`alonso--on-tool-confirm')."
+A `tool_call' is by definition a tool the bridge already executed, so every
+one of them is displayed as a title line, MCP tools included: the event type
+is the contract, not the name.  Mutating tools arrive as `tool_confirm'
+events instead (see `alonso--on-tool-confirm')."
   (let ((id (gethash "id" ev))
         (name (gethash "name" ev))
         (input (gethash "input" ev)))
-    (alonso--show-tool-call id name input (alonso--confirm-meta ev))
+    (alonso--show-tool-call id name input (alonso--confirm-meta ev) t)
     ;; Mark the pending separator so the model's next output (thinking or
     ;; response) is separated from the tool display by two blank lines, the
     ;; same as the mutating path does in `alonso--send-tool-confirm'.  The
@@ -873,12 +876,15 @@ reported as a bare timeout."
 
 (defun alonso--tool-read-only-p (name &optional input)
   "Return non-nil if tool NAME with INPUT is read-only (needs no confirmation).
-The static list is `read', `grep' and `glob'.  `knowledge' is classified
-per call, mirroring the bridge: `show' and `search' only read the store,
-while `add', `delete' and `reset' write to it.  Anything we cannot classify
-\(no command, a non-string command, an unknown one) counts as mutating, so
-a note planted by an injected page is always offered to the human.  `curl'
-fetches from the network, so it is never read-only either."
+This is the guess used when the caller has no better source: a `tool_call'
+event already tells the display that the bridge ran the tool (see
+`alonso--show-tool-call'), so nothing here is consulted for it.  The static
+list is `read', `grep' and `glob'.  `knowledge' is classified per call,
+mirroring the bridge: `show' and `search' only read the store, while `add',
+`delete' and `reset' write to it.  Anything we cannot classify (no command,
+a non-string command, an unknown one) counts as mutating, so a note planted
+by an injected page is always offered to the human.  `curl' fetches from the
+network, so it is never read-only either."
   (cond
    ((equal name "knowledge")
     (let ((cmd (alonso--hval input "command")))

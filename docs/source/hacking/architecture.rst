@@ -36,8 +36,8 @@ The dependency is strictly one-way::
     Self-contained: it only operates on positions in the current buffer, driven
     through ``alonso--render-markdown-region``.
   - **``alonso-image.el``**: pasting/attaching images to a prompt (multimodal).
-  - **``alonso-tools.el``**: tool-call display, per-call confirmation and the
-    trust-scope menus.
+  - **``alonso-tools.el``**: tool-call display (an MCP tool is shown as
+    ``<server>/<tool>``), per-call confirmation and the trust-scope menus.
 
 The conversation pair
 ---------------------
