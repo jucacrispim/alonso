@@ -208,11 +208,10 @@ between the tool call and the model's next output::
    On branch main
    nothing to commit, working tree clean
 
-   (tool output truncated)
-
-A call is cut at ``alonso-tool-output-limit`` characters, 8000 by default,
-and the truncated line says so.  Set it to nil to show everything.  The
-bridge has its own limit, and the history gets the whole text either way.
+A call is cut at ``alonso-tool-output-limit`` characters, 8000 by default, and
+a ``(tool output truncated)`` line marks the cut.  Set it to nil to show
+everything.  The bridge has its own limit, and the history gets the whole text
+either way.
 
 Hooks
 -----
