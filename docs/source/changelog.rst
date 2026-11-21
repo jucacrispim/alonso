@@ -23,8 +23,9 @@ Changed
 ~~~~~~~
 
 - An MCP tool is shown as ``<server>/<tool>`` with a 🔌 icon instead of the
-  full ``mcp__<server>__<tool>`` the bridge exposes. The name sent back in a
-  ``tool_confirm`` is unchanged.
+  full ``mcp__<server>__<tool>`` the bridge exposes. The trust grants in the
+  conversation mode line use the short name too (``🔓git/git_commit``). The
+  name sent back in a ``tool_confirm`` is unchanged.
 - A ``tool_call`` event always gets a title line. It used to be classified by
   tool name, so a read-only MCP tool, which the bridge already ran, was
   displayed as a ``Run tool: ...?`` question that nothing would answer.

@@ -250,6 +250,7 @@ only once the bridge reports one for the session, and the request overrides
 (e.g. `` [thinking=on effort=high]``) only when one is set for the next prompt.
 
 The conversation buffer's mode line keeps only the session state that is not
-about the prompt: its name, the active trust grants (``🔓shell``) and, as the
-very last group, the status: the braille spinner while a turn is running
-(``alonso…`` for a turn without a spinner), empty when idle.
+about the prompt: its name, the active trust grants (``🔓shell``,
+``🔓git/git_commit``) and, as the very last group, the status: the braille
+spinner while a turn is running (``alonso…`` for a turn without a spinner),
+empty when idle.

@@ -605,6 +605,14 @@ right (the `alonso-open' layout) and makes the pair atomic."
         (alonso--trust-all nil))
     (should (equal " 🔓shell curl=example.com" (alonso--mode-line-trust)))))
 
+(ert-deftest alonso-ui--mode-line-trust-shows-the-mcp-display-name ()
+  :tags '(ui)
+  (let ((alonso--trust-tools '("mcp__git__git_commit"))
+        (alonso--trust-class '(("mcp__git__git_add" . "/tmp")))
+        (alonso--trust-all nil))
+    (should (equal " 🔓git/git_commit git/git_add=/tmp"
+                   (alonso--mode-line-trust)))))
+
 (ert-deftest alonso-ui--mode-line-trust-shows-the-blanket-trust ()
   :tags '(ui)
   (let ((alonso--trust-tools nil)

@@ -45,6 +45,7 @@
 (declare-function alonso-attach-image-file "alonso-image" (file))
 (declare-function alonso-attach-image-url "alonso-image" (url))
 (declare-function alonso--cancel-confirm "alonso-tools" ())
+(declare-function alonso--tool-display-name "alonso-tools" (name))
 
 ;; `window--display-buffer' (window.el, preloaded) is the low-level display
 ;; primitive reused to hand the pair's column over to another buffer.
@@ -418,13 +419,16 @@ it covers, so it must be visible: an `all' scope picked once (\"every call
 of this tool\") would otherwise keep skipping the question for the rest of
 the session with nothing on screen saying so.  Tools trusted for every call
 are listed by name and class trusts as \"tool=class-key\" (e.g.
-\"curl=example.com\"); `alonso-trust-reset' clears them all.  The
-`specific' scope is not listed: it covers a single call, already marked
-`[trusted]' in the conversation."
+\"curl=example.com\"); `alonso-trust-reset' clears them all.  The tool name
+goes through `alonso--tool-display-name', so an MCP tool reads
+\"git/git_commit\" here too.  The `specific' scope is not listed: it covers
+a single call, already marked `[trusted]' in the conversation."
   (let ((parts (append (when alonso--trust-all (list "all"))
-                       alonso--trust-tools
+                       (mapcar #'alonso--tool-display-name alonso--trust-tools)
                        (mapcar (lambda (pair)
-                                 (format "%s=%s" (car pair) (cdr pair)))
+                                 (format "%s=%s"
+                                         (alonso--tool-display-name (car pair))
+                                         (cdr pair)))
                                alonso--trust-class))))
     (if parts
         (propertize (concat " 🔓" (mapconcat #'identity parts " "))
